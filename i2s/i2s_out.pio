@@ -1,0 +1,32 @@
+;
+; I2S output PIO program — left-justified 32-bit stereo
+;
+; side_set[0] = BCLK  (I2S_BCLK_PIN)
+; side_set[1] = LRCLK (I2S_BCLK_PIN + 1)
+; out pin     = DATA  (I2S_DATA_PIN)
+;
+; Autopull: shift left, threshold 32, auto enabled.
+; DMA feeds interleaved stereo: left word, right word, left word, ...
+;
+; Timing: each bit = 2 PIO cycles (BCLK=0 data-setup, BCLK=1 sample).
+; 32 bits/channel × 2 ch × 2 cycles = 128 PIO cycles per frame.
+; PIO clock = 2 × BCLK = 2 × (sample_rate × 64).
+
+.program i2s_out
+.side_set 2
+
+public entry_point:
+    set x, 30           side 0b01   ; init: x=30 for 32-bit loop, BCLK=1, LRCLK=0
+
+.wrap_target
+left_bit:
+    out pins, 1         side 0b00   ; drive bit, BCLK=0, LRCLK=0
+    jmp x-- left_bit    side 0b01   ; BCLK=1 (DAC samples), loop while x != 0
+    out pins, 1         side 0b10   ; last left bit, LRCLK transitions high, BCLK=0
+    set x, 30           side 0b11   ; BCLK=1 (clocks last left bit), LRCLK=1, x=30
+right_bit:
+    out pins, 1         side 0b10   ; drive bit, BCLK=0, LRCLK=1
+    jmp x-- right_bit   side 0b11   ; BCLK=1 (DAC samples), loop
+    out pins, 1         side 0b00   ; last right bit, LRCLK transitions low, BCLK=0
+    set x, 30           side 0b01   ; BCLK=1 (clocks last right bit), LRCLK=0, x=30
+.wrap
