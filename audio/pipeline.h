@@ -21,6 +21,17 @@ extern volatile int     g_active_dsp_buf;
 extern semaphore_t g_sem_input_ready;   /* Core 0 posts; Core 1 waits */
 extern semaphore_t g_sem_output_ready;  /* Core 1 posts; Core 0 waits */
 
+/* Snapshot buffers written by Core 0 each time a block completes —
+ * safe to read from main() without worrying about the ping-pong index. */
+extern float g_display_in[DSP_BLOCK_SIZE];
+extern float g_display_out[DSP_BLOCK_SIZE];
+
+/* Incremented by Core 1 after every completed process() call.
+ * If this stays 0 in the visualiser, Core 1 is stuck. */
+extern volatile uint32_t g_core1_count;
+/* 0=never started  1=entry  2=waiting on sem  3=inside process()  4=completed */
+extern volatile uint32_t g_core1_checkpoint;
+
 /* Called once from main() (Core 0) after dsp_init().
  * Starts the I2S DMA; from this point DMA IRQs drive the pipeline. */
 void pipeline_init(void);

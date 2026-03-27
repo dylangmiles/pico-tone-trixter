@@ -5,12 +5,16 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
+#include "hardware/resets.h"
 
 static int s_chan_a, s_chan_b;
 static int32_t *s_buf[2];
 static i2s_callback_t s_callback;
 
+volatile uint32_t g_dma_irq_count = 0;
+
 static void dma_irq0_handler(void) {
+    g_dma_irq_count++;
     bool a = dma_channel_get_irq0_status(s_chan_a);
     bool b = dma_channel_get_irq0_status(s_chan_b);
 
@@ -33,6 +37,14 @@ void i2s_output_init(int32_t *buf_a, int32_t *buf_b, i2s_callback_t cb) {
     s_buf[0]  = buf_a;
     s_buf[1]  = buf_b;
     s_callback = cb;
+
+    /* Force-reset DMA and PIO0 to guarantee a clean hardware state after any
+     * kind of reboot (watchdog, UF2 flash-drag, etc.).  The bootrom USB stack
+     * uses DMA; without this, the DMA BUSY/IRQ bits can be stale after a
+     * flash-triggered reset, preventing the first DMA completion IRQ from
+     * ever firing. */
+    reset_block(RESETS_RESET_DMA_BITS | RESETS_RESET_PIO0_BITS);
+    unreset_block_wait(RESETS_RESET_DMA_BITS | RESETS_RESET_PIO0_BITS);
 
     /* ---- PIO setup ---- */
     PIO  pio    = pio0;

@@ -1,5 +1,6 @@
 #include "audio/pipeline.h"
 #include "FFTConvolver.h"
+#include "AudioFFT.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include <string.h>
@@ -10,6 +11,10 @@
 
 static fftconvolver::FFTConvolver s_convolver;
 static float s_ir[IR_LENGTH];
+
+/* 32 KB stack for Core 1 — the Ooura FFT for a 1024-point complex transform
+ * (blockSize=256, IR=512 → next power-of-2 = 1024) needs ~20-30 KB of stack. */
+static uint32_t s_core1_stack[32768 / sizeof(uint32_t)];
 
 /*
  * Generate a simple room-reverb impulse response in-place.
@@ -58,12 +63,20 @@ static void generate_reverb_ir(float *ir, int n) {
 
 /* Core 1 entry point: wait for input blocks, run convolver, signal output ready. */
 static void dsp_core1_entry(void) {
+    g_core1_checkpoint = 1;   /* Core 1 entered */
+
     while (true) {
+        g_core1_checkpoint = 2;   /* waiting on semaphore */
         sem_acquire_blocking(&g_sem_input_ready);
 
+        g_core1_checkpoint = 10;  /* about to read idx */
         int idx = g_active_dsp_buf;
+        g_core1_checkpoint = 11;  /* calling process() */
         s_convolver.process(g_dsp_in[idx], g_dsp_out[idx], DSP_BLOCK_SIZE);
+        g_core1_checkpoint = 12;  /* process() returned */
 
+        g_core1_checkpoint = 4;   /* completed */
+        g_core1_count++;
         sem_release(&g_sem_output_ready);
     }
 }
@@ -89,5 +102,32 @@ void dsp_init(void) {
 
     printf("FFTConvolver ready: block=%d IR=%d samples\n", DSP_BLOCK_SIZE, IR_LENGTH);
 
-    multicore_launch_core1(dsp_core1_entry);
+    /*
+     * Warm-up: call process() twice on Core 0 — once with zeros, once with
+     * a non-zero sine burst.
+     *
+     * The pico_float ROM shim uses lazy patching (float_table_shim_on_use_helper):
+     * sf_table entries are only patched to the real ROM function on their FIRST
+     * call.  A zero-input process() short-circuits many fmul paths (0×x = 0)
+     * so those entries never get patched.  When Core 1 later calls process()
+     * with real (non-zero) audio data it would hit an unpatched entry on ROM v1
+     * silicon.  Running a non-zero pass on Core 0 first ensures every float
+     * code path in the butterfly is exercised and all sf_table entries patched
+     * before Core 1 starts.
+     */
+    static float test_in[DSP_BLOCK_SIZE];
+    static float test_out[DSP_BLOCK_SIZE];
+
+    memset(test_in, 0, sizeof(test_in));
+    s_convolver.process(test_in, test_out, DSP_BLOCK_SIZE);   /* zeros — primes OLA state */
+
+    /* Fill with a non-zero sine burst to exercise every fmul code path. */
+    for (int i = 0; i < DSP_BLOCK_SIZE; i++) {
+        test_in[i] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)i / 44100.0f);
+    }
+    printf("Core0: warm-up process() with sine input...\n");
+    s_convolver.process(test_in, test_out, DSP_BLOCK_SIZE);
+    printf("Core0: warm-up done, out[0]=%.4f\n", (double)test_out[0]);
+
+    multicore_launch_core1_with_stack(dsp_core1_entry, s_core1_stack, sizeof(s_core1_stack));
 }

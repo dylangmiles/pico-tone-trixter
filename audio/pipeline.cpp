@@ -13,6 +13,13 @@ float        g_dsp_in[2][DSP_BLOCK_SIZE];
 float        g_dsp_out[2][DSP_BLOCK_SIZE];
 volatile int g_active_dsp_buf = 0;
 
+/* ---- Display snapshots (written by Core 0 IRQ, read by main) ---- */
+float g_display_in[DSP_BLOCK_SIZE];
+float g_display_out[DSP_BLOCK_SIZE];
+
+volatile uint32_t g_core1_count      = 0;
+volatile uint32_t g_core1_checkpoint = 0;
+
 semaphore_t g_sem_input_ready;
 semaphore_t g_sem_output_ready;
 
@@ -65,6 +72,8 @@ static void i2s_dma_cb(int32_t *buf_done) {
 
     /* Grab completed DSP output (non-blocking; output silence on overrun). */
     if (sem_try_acquire(&g_sem_output_ready)) {
+        /* Snapshot before converting — this is the last good convolver output. */
+        memcpy(g_display_out, g_dsp_out[g_active_dsp_buf], DSP_BLOCK_SIZE * sizeof(float));
         float_to_i2s(g_dsp_out[g_active_dsp_buf], s_tx_buf[fill_slot], I2S_BLOCK_SIZE);
         g_active_dsp_buf ^= 1;
     } else {
@@ -72,8 +81,9 @@ static void i2s_dma_cb(int32_t *buf_done) {
         memset(s_tx_buf[fill_slot], 0, I2S_BLOCK_SIZE * 2 * sizeof(int32_t));
     }
 
-    /* Fill new DSP input and wake Core 1. */
+    /* Fill new DSP input, snapshot it, then wake Core 1. */
     sine_emulator_fill(g_dsp_in[g_active_dsp_buf], I2S_BLOCK_SIZE);
+    memcpy(g_display_in, g_dsp_in[g_active_dsp_buf], DSP_BLOCK_SIZE * sizeof(float));
     sem_release(&g_sem_input_ready);
 }
 
