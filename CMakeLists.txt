@@ -61,3 +61,60 @@ pico_add_extra_outputs(pico_tone_trixter)
 
 pico_enable_stdio_usb(pico_tone_trixter 0)
 pico_enable_stdio_uart(pico_tone_trixter 1)
+
+# ============================================================
+# Offline IR test — processes embedded audio and streams WAV
+# over USB CDC for host capture via tools/capture_wav.py
+# Does NOT use copy_to_ram: the 1.5 MB piezo binary lives in
+# flash and is accessed via XIP.
+# ============================================================
+
+# Step 1: Python script converts WAV files → ir_array.h + piezo_raw.bin
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(SAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/audio/samples)
+add_custom_command(
+    OUTPUT
+        ${SAMPLES_DIR}/ir_array.h
+        ${SAMPLES_DIR}/piezo_raw.bin
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_audio_arrays.py
+            ${SAMPLES_DIR}
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_audio_arrays.py
+        ${SAMPLES_DIR}/IR_garrison-NT1-A-20260320_48k_2048_M.wav
+        ${SAMPLES_DIR}/garrison-piezo-20260320.wav
+    COMMENT "Generating audio C arrays from WAV files"
+)
+add_custom_target(audio_arrays DEPENDS
+    ${SAMPLES_DIR}/ir_array.h
+    ${SAMPLES_DIR}/piezo_raw.bin
+)
+
+# Step 2: Embed piezo_raw.bin as a .rodata section using objcopy.
+# Symbol names: _binary_piezo_raw_bin_{start,end,size}
+set(PIEZO_OBJ ${CMAKE_CURRENT_BINARY_DIR}/piezo_raw.o)
+add_custom_command(
+    OUTPUT ${PIEZO_OBJ}
+    COMMAND ${CMAKE_OBJCOPY}
+            -I binary -O elf32-littlearm -B armv6s-m
+            --rename-section .data=.rodata,alloc,load,readonly,data,contents
+            piezo_raw.bin ${PIEZO_OBJ}
+    WORKING_DIRECTORY ${SAMPLES_DIR}
+    DEPENDS ${SAMPLES_DIR}/piezo_raw.bin
+    COMMENT "Embedding piezo audio binary"
+)
+
+# Step 3: offline_test executable
+add_executable(offline_test
+    audio/offline_test.cpp
+    ${PIEZO_OBJ}
+)
+add_dependencies(offline_test audio_arrays)
+target_include_directories(offline_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(offline_test
+    pico_stdlib
+    fft_convolver
+)
+pico_add_extra_outputs(offline_test)
+pico_enable_stdio_usb(offline_test 0)
+pico_enable_stdio_uart(offline_test 1)

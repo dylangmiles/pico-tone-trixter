@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Environment
 
 - **Board**: Raspberry Pi Pico (RP2040), dual-core Cortex-M0+ @ 125 MHz, no hardware FPU
-- **SDK**: Pico SDK 1.5.1 at `$PICO_SDK_PATH` (`/Users/dylan/dev/sdk/pico/pico-sdk`)
+- **SDK**: Pico SDK 1.5.1 at `$PICO_SDK_PATH` (`/Users/dylan/dev/sdk/pico/pico-sdk`) — deliberately pinned to 1.5.1 for RP2040. SDK 2.x will live at a separate path for the RP2350 project.
 - **Toolchain**: ARM GCC at `/Applications/ArmGNUToolchain/12.3.rel1/arm-none-eabi/`
 - **Build system**: CMake + Ninja (CLion-managed, build dir is `cmake-build-debug`)
 - **Flash**: Debug probe via CLion "Debug on Pico" (OpenOCD Download & Run)
@@ -31,11 +31,21 @@ main.cpp              — entry point, frame loop (Core 0)
 audio/
   pipeline.cpp/h      — DMA callback, sine oscillator, shared buffers, semaphores
   dsp.cpp             — FFTConvolver init + warm-up, Core 1 entry point
+  offline_test.cpp    — standalone IR test: processes embedded audio, streams WAV via UART
+  samples/
+    IR_garrison-NT1-A-20260320_48k_2048_M.wav  — 2048-sample NT1-A acoustic IR, 48kHz
+    garrison-piezo-20260320.wav                 — 7.9 sec piezo recording, 48kHz
+    ir_array.h          — generated: IR as C float array (do not edit)
+    piezo_raw.bin       — generated: raw float32 samples for objcopy embedding
 i2s/
   i2s.c/h             — PIO I2S output driver, DMA ping-pong
   i2s_out.pio         — PIO program: I2S bit-clocking
 lib/FFTConvolver/     — HiFi-LoFi FFTConvolver (Ooura FFT backend)
   AudioFFT.cpp        — converted from double → float for speed
+tools/
+  gen_audio_arrays.py — converts WAV files → ir_array.h + piezo_raw.bin (run by CMake)
+  capture_wav.py      — host script: receives processed WAV from Pico over UART
+  requirements.txt    — pyserial (install into tools/.venv)
 openocd.cfg           — debug probe config
 ```
 
@@ -101,7 +111,22 @@ At real-time: `blocks` ≈ `dma_irq` ≈ 172 per 400 ms.
 
 ## Performance status
 
-Currently ~62 blocks/sec (36% of real-time). The bottleneck is the 1024-point Ooura FFT in software float on a no-FPU Cortex-M0+. Optimisation in progress.
+Performance scales linearly with IR segment count (IR_length / block_size):
+
+| Scenario | IR | Segments | FFT size | Real-time |
+|---|---|---|---|---|
+| Current reverb test | 512 samples | 2 | 1024-pt | 36% |
+| NT1-A acoustic IR | 2048 samples | 8 | 512-pt | **8%** |
+
+Bottleneck: Ooura FFT in software float on Cortex-M0+ (no hardware FPU).
+RP2350 Cortex-M33 hardware FPU expected to give ~10-20× speedup → ~120% real-time with 2048-sample IR.
+`TwoStageFFTConvolver` (already in lib) should give further headroom for long IRs.
+
+## Sample rate note
+
+Current firmware runs at 44100 Hz. IR assets and recorded samples are at **48000 Hz**.
+This mismatch must be resolved before real-time deployment — change `I2S_SAMPLE_RATE` to 48000.
+The offline test is unaffected (it processes at the IR's native rate).
 
 ## GPIO pinout
 
