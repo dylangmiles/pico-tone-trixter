@@ -105,6 +105,10 @@ add_custom_command(
 )
 
 # Step 3: offline_test executable
+option(OFFLINE_TEST_TWO_STAGE
+    "Use TwoStageFFTConvolver in offline_test (head=64, tail=2048) instead of FFTConvolver (block=256)"
+    OFF)
+
 add_executable(offline_test
     audio/offline_test.cpp
     ${PIEZO_OBJ}
@@ -115,6 +119,12 @@ target_link_libraries(offline_test
     pico_stdlib
     fft_convolver
 )
+if(OFFLINE_TEST_TWO_STAGE)
+    target_compile_definitions(offline_test PRIVATE USE_TWO_STAGE=1)
+    message(STATUS "offline_test: TwoStageFFTConvolver (head=64 tail=2048)")
+else()
+    message(STATUS "offline_test: FFTConvolver (block=256)")
+endif()
 pico_add_extra_outputs(offline_test)
 pico_enable_stdio_usb(offline_test 0)
 pico_enable_stdio_uart(offline_test 1)
