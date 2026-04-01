@@ -9,7 +9,7 @@ extern "C" {
 #define I2S_DATA_PIN    26
 #define I2S_BCLK_PIN    27   /* LRCLK = I2S_BCLK_PIN + 1 = 28 */
 
-#define I2S_SAMPLE_RATE 44100
+#define I2S_SAMPLE_RATE 48000
 #define I2S_BLOCK_SIZE  256  /* mono samples per DMA block */
 
 /* Called from DMA_IRQ_0 when a buffer finishes playing.

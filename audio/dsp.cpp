@@ -7,7 +7,7 @@
 #include <math.h>
 #include <cstdio>
 
-#define IR_LENGTH 512   /* ~11.6 ms at 44100 Hz */
+#define IR_LENGTH 512   /* ~10.7 ms at 48000 Hz — placeholder; will use 2048-sample NT1-A IR */
 
 static fftconvolver::FFTConvolver s_convolver;
 static float s_ir[IR_LENGTH];
@@ -123,7 +123,7 @@ void dsp_init(void) {
 
     /* Fill with a non-zero sine burst to exercise every fmul code path. */
     for (int i = 0; i < DSP_BLOCK_SIZE; i++) {
-        test_in[i] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)i / 44100.0f);
+        test_in[i] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)i / 48000.0f);
     }
     printf("Core0: warm-up process() with sine input...\n");
     s_convolver.process(test_in, test_out, DSP_BLOCK_SIZE);

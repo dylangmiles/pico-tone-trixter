@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.13...3.29)
 
 include(pico_sdk_import.cmake)
 
+# Target Raspberry Pi Pico 2 (RP2350, Cortex-M33)
+set(PICO_BOARD pico2)
+
 project(pico_tone_trixter C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
@@ -20,10 +23,7 @@ target_include_directories(fft_convolver PUBLIC lib/FFTConvolver)
 # Disable asserts: on newlib/embedded an assert failure calls abort() which silently
 # spins with no output, making it look like a hang with no panic.
 target_compile_definitions(fft_convolver PRIVATE NDEBUG)
-# pico_float/pico_double route float/double ops through RP2040 ROM routines.
-# The Ooura FFT backend in AudioFFT uses double internally, so pico_double is required
-# to avoid catastrophically slow soft-float 64-bit arithmetic (libgcc fallback).
-target_link_libraries(fft_convolver pico_float pico_double)
+# RP2350 (Cortex-M33) has hardware FPU — pico_float/pico_double are not needed.
 
 # ---- Main executable ----
 add_executable(pico_tone_trixter
@@ -44,7 +44,6 @@ target_include_directories(pico_tone_trixter PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(pico_tone_trixter
     pico_stdlib
     pico_multicore
-    pico_float
     hardware_pwm
     hardware_pio
     hardware_dma
@@ -96,7 +95,7 @@ set(PIEZO_OBJ ${CMAKE_CURRENT_BINARY_DIR}/piezo_raw.o)
 add_custom_command(
     OUTPUT ${PIEZO_OBJ}
     COMMAND ${CMAKE_OBJCOPY}
-            -I binary -O elf32-littlearm -B armv6s-m
+            -I binary -O elf32-littlearm -B armv8-m.main
             --rename-section .data=.rodata,alloc,load,readonly,data,contents
             piezo_raw.bin ${PIEZO_OBJ}
     WORKING_DIRECTORY ${SAMPLES_DIR}

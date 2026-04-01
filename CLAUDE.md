@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment
 
-- **Board**: Raspberry Pi Pico (RP2040), dual-core Cortex-M0+ @ 125 MHz, no hardware FPU
-- **SDK**: Pico SDK 1.5.1 at `$PICO_SDK_PATH` (`/Users/dylan/dev/sdk/pico/pico-sdk`) — deliberately pinned to 1.5.1 for RP2040. SDK 2.x will live at a separate path for the RP2350 project.
+- **Board**: Raspberry Pi Pico 2 (RP2350), dual-core Cortex-M33 @ 150 MHz, hardware FPU
+- **SDK**: Pico SDK 2.x at `$PICO_SDK_PATH` (`/Users/dylan/dev/sdk/pico/pico-sdk-2`). Old SDK 1.5.1 remains at `/Users/dylan/dev/sdk/pico/pico-sdk` for reference.
 - **Toolchain**: ARM GCC at `/Applications/ArmGNUToolchain/12.3.rel1/arm-none-eabi/`
 - **Build system**: CMake + Ninja (CLion-managed, build dir is `cmake-build-debug`)
 - **Flash**: Debug probe via CLion "Debug on Pico" (OpenOCD Download & Run)
@@ -58,17 +58,15 @@ openocd.cfg           — debug probe config
 
 | Symbol | File | Value |
 |--------|------|-------|
-| `I2S_SAMPLE_RATE` | i2s/i2s.h | 44100 |
+| `I2S_SAMPLE_RATE` | i2s/i2s.h | 48000 |
 | `I2S_BLOCK_SIZE` | i2s/i2s.h | 256 (= `DSP_BLOCK_SIZE`) |
 | `IR_LENGTH` | audio/dsp.cpp | 512 |
 | Core 1 stack | audio/dsp.cpp | 32 KB |
 
 ## Critical implementation details
 
-### Float ROM patching (sf_table lazy init)
-The RP2040's `pico_float` ROM uses lazy patching on ROM v1 silicon: `sf_table` entries are only patched on first use. Zero inputs to `fmul` short-circuit the code path, leaving entries unpatched. If Core 1 is the first to exercise a float path it can crash.
-
-**Fix**: `dsp_init()` runs two warm-up `process()` calls on Core 0 (first with zeros, then with a sine burst) before launching Core 1. This ensures all `sf_table` entries are patched before Core 1 starts.
+### Float warm-up on Core 0 (legacy note — no longer required)
+On RP2040, the `pico_float` ROM used lazy `sf_table` patching that required a warm-up pass on Core 0. On RP2350 the hardware FPU makes this unnecessary, but `dsp_init()` still runs two warm-up `process()` calls (harmless) to pre-prime the OLA convolver state.
 
 ### DMA/PIO hardware reset on boot
 After a watchdog or flash-triggered reset, DMA and PIO hardware can retain stale state from the bootrom USB stack.
@@ -80,8 +78,8 @@ When using CLion's "Debug on Pico" (OpenOCD), GDB attaches to Core 0. Core 1 is 
 
 **Fix**: `openocd.cfg` has a `gdb-attach` event that resumes Core 1:
 ```tcl
-rp2040.core1 configure -event gdb-attach {
-    catch { targets rp2040.core1; resume; targets rp2040.core0 }
+rp2350.core1 configure -event gdb-attach {
+    catch { targets rp2350.core1; resume; targets rp2350.core0 }
 }
 ```
 
@@ -89,10 +87,7 @@ rp2040.core1 configure -event gdb-attach {
 `fft_convolver` is built with `NDEBUG` to suppress `assert()`. On newlib/embedded, a failed assert calls `abort()` which spins silently — indistinguishable from a hang.
 
 ### copy_to_ram
-`pico_set_binary_type(pico_tone_trixter copy_to_ram)` copies the entire binary to SRAM at boot. Eliminates XIP flash latency on Core 1 (Core 1 can't use the XIP cache without extra configuration).
-
-### pico_float + pico_double
-`fft_convolver` links both. The Ooura FFT backend uses `double` internally; without `pico_double`, it falls back to catastrophically slow libgcc soft-float.
+`pico_set_binary_type(pico_tone_trixter copy_to_ram)` copies the entire binary to SRAM at boot. Eliminates XIP flash latency on Core 1. RP2350 has 520 KB SRAM so this is comfortable.
 
 ## Diagnostics
 
@@ -111,22 +106,18 @@ At real-time: `blocks` ≈ `dma_irq` ≈ 172 per 400 ms.
 
 ## Performance status
 
-Performance scales linearly with IR segment count (IR_length / block_size):
+RP2040 measurements (for reference):
 
-| Scenario | IR | Segments | FFT size | Real-time |
+| Scenario | IR | Segments | FFT size | Real-time (RP2040) |
 |---|---|---|---|---|
-| Current reverb test | 512 samples | 2 | 1024-pt | 36% |
+| Synthetic reverb | 512 samples | 2 | 1024-pt | 36% |
 | NT1-A acoustic IR | 2048 samples | 8 | 512-pt | **8%** |
 
-Bottleneck: Ooura FFT in software float on Cortex-M0+ (no hardware FPU).
-RP2350 Cortex-M33 hardware FPU expected to give ~10-20× speedup → ~120% real-time with 2048-sample IR.
-`TwoStageFFTConvolver` (already in lib) should give further headroom for long IRs.
+RP2350 hardware FPU (Cortex-M33) expected ~10-20× float speedup. Projected with 2048-sample IR:
+- `FFTConvolver` block=256: ~120% of real-time → too tight
+- `TwoStageFFTConvolver` head=64 tail=512: Core 0 ~0.75ms/block (budget 1.33ms), Core 1 ~2.4ms/call (budget 10.7ms) → comfortable headroom
 
-## Sample rate note
-
-Current firmware runs at 44100 Hz. IR assets and recorded samples are at **48000 Hz**.
-This mismatch must be resolved before real-time deployment — change `I2S_SAMPLE_RATE` to 48000.
-The offline test is unaffected (it processes at the IR's native rate).
+`TwoStageFFTConvolver` is in `lib/FFTConvolver/` and selectable via `OFFLINE_TEST_TWO_STAGE=ON`.
 
 ## GPIO pinout
 
