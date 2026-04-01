@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.13...3.29)
 
-include(pico_sdk_import.cmake)
-
-# Target Raspberry Pi Pico 2 (RP2350, Cortex-M33)
+# Must be set before include(pico_sdk_import.cmake) — SDK reads it during toolchain setup
 set(PICO_BOARD pico2)
+
+include(pico_sdk_import.cmake)
 
 project(pico_tone_trixter C CXX ASM)
 
