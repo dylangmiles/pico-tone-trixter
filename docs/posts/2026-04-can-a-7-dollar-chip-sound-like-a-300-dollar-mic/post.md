@@ -68,6 +68,8 @@ The RP2350 (Pico 2) has a Cortex-M33 with a hardware floating-point unit. The sa
 
 The algorithm went from 36% over budget to 7× headroom in a single hardware swap. The RP2350's hardware FPU delivered approximately 24× speedup on the tail convolution alone.
 
+![RP2040 vs RP2350 performance comparison](assets/perf_comparison.png)
+
 ---
 
 ## Does It Actually Work?
