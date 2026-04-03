@@ -11,7 +11,7 @@
  *   cmake -DOFFLINE_TEST_TWO_STAGE=ON ..   — TwoStageFFTConvolver (head=64, tail=2048)
  *   cmake -DOFFLINE_TEST_TWO_STAGE=OFF ..  — FFTConvolver (block=256)
  *
- * Build note: this target does NOT use copy_to_ram — the 1.5 MB piezo binary
+ * Build note: this target does NOT use copy_to_ram — the piezo binary
  * lives in flash and is accessed via XIP.  Only the firmware code is in SRAM.
  */
 
@@ -24,10 +24,10 @@
 #include <cstring>
 #include <cstdio>
 
-#include "audio/samples/ir_array.h"   // ir_samples[], ir_num_samples, ir_sample_rate
+#include OFFLINE_IR_HEADER              // ir_samples[], ir_num_samples, ir_sample_rate
 
-// Piezo raw float32 samples embedded from audio/samples/piezo_raw.bin via objcopy.
-// objcopy derives symbol names from the filename: hyphens and dots → underscores.
+// Piezo raw float32 samples embedded from audio/samples/piezo_raw_<guitar>.bin via objcopy.
+// Symbol names are normalised to _binary_piezo_raw_bin_{start,end} via --redefine-sym.
 extern "C" {
     extern const float _binary_piezo_raw_bin_start[];
     extern const float _binary_piezo_raw_bin_end[];

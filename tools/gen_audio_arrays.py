@@ -11,6 +11,7 @@ Usage (called automatically by CMake, or manually):
   python3 tools/gen_audio_arrays.py <samples_dir>
 """
 
+import argparse
 import struct
 import sys
 import os
@@ -75,16 +76,22 @@ def read_wav_mono_float(path):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <samples_dir>", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Convert WAV files to firmware C/binary arrays")
+    parser.add_argument('samples_dir', help='Directory containing WAV files')
+    parser.add_argument('--guitar', choices=['garrison', 'tanglewood'], default='garrison',
+                        help='Guitar to use for IR and piezo source (default: garrison)')
+    parser.add_argument('--duration', type=float, default=20.0,
+                        help='Max seconds of piezo audio to embed (default: 20.0)')
+    args = parser.parse_args()
 
-    samples_dir = sys.argv[1]
+    samples_dir = args.samples_dir
+    guitar      = args.guitar
+    max_seconds = args.duration
 
-    ir_wav    = os.path.join(samples_dir, 'IR_garrison-NT1-A-20260320_48k_2048_M.wav')
-    piezo_wav = os.path.join(samples_dir, 'garrison-piezo-20260320.wav')
-    ir_out    = os.path.join(samples_dir, 'ir_array.h')
-    piezo_out = os.path.join(samples_dir, 'piezo_raw.bin')
+    ir_wav    = os.path.join(samples_dir, f'IR_{guitar}-NT1-A-20260320_48k_2048_M.wav')
+    piezo_wav = os.path.join(samples_dir, f'{guitar}-piezo-20260320.wav')
+    ir_out    = os.path.join(samples_dir, f'ir_array_{guitar}.h')
+    piezo_out = os.path.join(samples_dir, f'piezo_raw_{guitar}.bin')
 
     # ---- IR → C float array header ----
     print(f"Reading IR: {ir_wav}")
@@ -113,7 +120,13 @@ def main():
     # ---- Piezo → raw float32 binary ----
     print(f"Reading piezo: {piezo_wav}")
     piezo_samples, piezo_rate = read_wav_mono_float(piezo_wav)
-    print(f"  {len(piezo_samples)} samples @ {piezo_rate} Hz  ({len(piezo_samples)/piezo_rate:.2f} sec)")
+    full_sec = len(piezo_samples) / piezo_rate
+    print(f"  {len(piezo_samples)} samples @ {piezo_rate} Hz  ({full_sec:.2f} sec)")
+
+    max_samples = int(max_seconds * piezo_rate)
+    if len(piezo_samples) > max_samples:
+        piezo_samples = piezo_samples[:max_samples]
+        print(f"  Truncated to {max_seconds:.1f} sec ({max_samples} samples) — full file was {full_sec:.1f} sec")
 
     if ir_rate != piezo_rate:
         print(f"  WARNING: IR sample rate ({ir_rate}) != piezo sample rate ({piezo_rate})")

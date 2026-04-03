@@ -64,43 +64,52 @@ pico_enable_stdio_uart(pico_tone_trixter 1)
 # ============================================================
 # Offline IR test — processes embedded audio and streams WAV
 # over USB CDC for host capture via tools/capture_wav.py
-# Does NOT use copy_to_ram: the 1.5 MB piezo binary lives in
-# flash and is accessed via XIP.
+# Does NOT use copy_to_ram: the piezo binary lives in flash
+# and is accessed via XIP.
 # ============================================================
+
+set(OFFLINE_GUITAR "garrison" CACHE STRING "Guitar for offline test: garrison or tanglewood")
+set(OFFLINE_DURATION "20" CACHE STRING "Seconds of piezo audio to embed (keep under ~18 to fit in 4MB flash)")
 
 # Step 1: Python script converts WAV files → ir_array.h + piezo_raw.bin
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(SAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/audio/samples)
+set(IR_ARRAY_H  ${SAMPLES_DIR}/ir_array_${OFFLINE_GUITAR}.h)
+set(PIEZO_BIN   ${SAMPLES_DIR}/piezo_raw_${OFFLINE_GUITAR}.bin)
+
 add_custom_command(
     OUTPUT
-        ${SAMPLES_DIR}/ir_array.h
-        ${SAMPLES_DIR}/piezo_raw.bin
+        ${IR_ARRAY_H}
+        ${PIEZO_BIN}
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_audio_arrays.py
             ${SAMPLES_DIR}
+            --guitar ${OFFLINE_GUITAR}
+            --duration ${OFFLINE_DURATION}
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_audio_arrays.py
-        ${SAMPLES_DIR}/IR_garrison-NT1-A-20260320_48k_2048_M.wav
-        ${SAMPLES_DIR}/garrison-piezo-20260320.wav
-    COMMENT "Generating audio C arrays from WAV files"
+        ${SAMPLES_DIR}/IR_${OFFLINE_GUITAR}-NT1-A-20260320_48k_2048_M.wav
+        ${SAMPLES_DIR}/${OFFLINE_GUITAR}-piezo-20260320.wav
+    COMMENT "Generating audio arrays: ${OFFLINE_GUITAR}, ${OFFLINE_DURATION}s"
 )
-add_custom_target(audio_arrays DEPENDS
-    ${SAMPLES_DIR}/ir_array.h
-    ${SAMPLES_DIR}/piezo_raw.bin
-)
+add_custom_target(audio_arrays DEPENDS ${IR_ARRAY_H} ${PIEZO_BIN})
 
-# Step 2: Embed piezo_raw.bin as a .rodata section using objcopy.
-# Symbol names: _binary_piezo_raw_bin_{start,end,size}
-set(PIEZO_OBJ ${CMAKE_CURRENT_BINARY_DIR}/piezo_raw.o)
+# Step 2: Embed piezo_raw_<guitar>.bin as a .rodata section using objcopy.
+# --redefine-sym normalises the symbol names to _binary_piezo_raw_bin_{start,end,size}
+# so offline_test.cpp is independent of which guitar is selected.
+set(PIEZO_OBJ ${CMAKE_CURRENT_BINARY_DIR}/piezo_raw_${OFFLINE_GUITAR}.o)
 add_custom_command(
     OUTPUT ${PIEZO_OBJ}
     COMMAND ${CMAKE_OBJCOPY}
             -I binary -O elf32-littlearm -B armv8-m.main
             --rename-section .data=.rodata,alloc,load,readonly,data,contents
-            piezo_raw.bin ${PIEZO_OBJ}
+            --redefine-sym _binary_piezo_raw_${OFFLINE_GUITAR}_bin_start=_binary_piezo_raw_bin_start
+            --redefine-sym _binary_piezo_raw_${OFFLINE_GUITAR}_bin_end=_binary_piezo_raw_bin_end
+            --redefine-sym _binary_piezo_raw_${OFFLINE_GUITAR}_bin_size=_binary_piezo_raw_bin_size
+            piezo_raw_${OFFLINE_GUITAR}.bin ${PIEZO_OBJ}
     WORKING_DIRECTORY ${SAMPLES_DIR}
-    DEPENDS ${SAMPLES_DIR}/piezo_raw.bin
-    COMMENT "Embedding piezo audio binary"
+    DEPENDS ${PIEZO_BIN}
+    COMMENT "Embedding ${OFFLINE_GUITAR} piezo audio binary"
 )
 
 # Step 3: offline_test executable
@@ -117,6 +126,9 @@ target_include_directories(offline_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(offline_test
     pico_stdlib
     fft_convolver
+)
+target_compile_definitions(offline_test PRIVATE
+    OFFLINE_IR_HEADER="audio/samples/ir_array_${OFFLINE_GUITAR}.h"
 )
 if(OFFLINE_TEST_TWO_STAGE)
     target_compile_definitions(offline_test PRIVATE USE_TWO_STAGE=1)

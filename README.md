@@ -60,7 +60,12 @@ IRs are captured by recording the guitar simultaneously through the piezo and a 
 
 See [docs/ir_capture_guide.md](docs/ir_capture_guide.md) for the full methodology.
 
-Current IR: Garrison acoustic, NT1-A condenser, UA Gigcaster 8, 2048 samples @ 48 kHz.
+Available IRs (2048 samples @ 48 kHz, NT1-A condenser, UA Gigcaster 8):
+
+| Guitar | IR file |
+|--------|---------|
+| Garrison acoustic | `audio/samples/IR_garrison-NT1-A-20260320_48k_2048_M.wav` |
+| Tanglewood acoustic | `audio/samples/IR_tanglewood-NT1-A-20260320_48k_2048_M.wav` |
 
 ---
 
@@ -80,18 +85,47 @@ Flash via debug probe using CLion's **Debug on Pico** (OpenOCD Download & Run). 
 
 ### Offline IR test
 
-To validate IR processing without live hardware:
+To validate IR processing without live hardware, choose a guitar and build:
 
 ```sh
-# Build offline test target
-cmake -DOFFLINE_TEST=ON -DOFFLINE_TEST_TWO_STAGE=ON ..
-ninja
+# Garrison acoustic (default)
+cmake -DOFFLINE_TEST_TWO_STAGE=ON -DOFFLINE_GUITAR=garrison -DOFFLINE_DURATION=20 ..
+ninja offline_test
 
-# Flash, then capture output over UART
-python3 tools/capture_wav.py
+# Tanglewood acoustic
+cmake -DOFFLINE_TEST_TWO_STAGE=ON -DOFFLINE_GUITAR=tanglewood -DOFFLINE_DURATION=20 ..
+ninja offline_test
+```
 
-# Validate against Python reference convolution
-python3 tools/validate_ir.py
+Flash `offline_test.uf2`, then capture the processed output over UART:
+
+```sh
+# Find the debug probe's UART port
+ls /dev/cu.usbmodem*
+
+# Capture — output is saved to tools/output/output_<guitar>-<duration>s-<date>.wav
+cd tools && source .venv/bin/activate
+python3 capture_wav.py /dev/cu.usbmodem101 --guitar garrison --duration 20
+```
+
+Validate the captured output against a Python reference convolution:
+
+```sh
+cd tools && source .venv/bin/activate
+
+# Garrison
+ python3 validate_ir.py \
+  --input  ../audio/samples/garrison-piezo-20260320.wav \
+  --ir     ../audio/samples/IR_garrison-NT1-A-20260320_48k_2048_M.wav \
+  --output output/output_garrison-20s-<date>.wav \
+  --plot   output/ir_validation-garrison-<date>.png
+
+# Tanglewood
+python3 validate_ir.py \
+  --input  ../audio/samples/tanglewood-piezo-20260320.wav \
+  --ir     ../audio/samples/IR_tanglewood-NT1-A-20260320_48k_2048_M.wav \
+  --output output/output_tanglewood-20s-<date>.wav \
+  --plot   output/ir_validation-tanglewood-<date>.png
 ```
 
 Six automated checks run: output length, signal modification, spectral shape, and numerical accuracy (target: <2% RMS error vs Python reference). All pass on RP2350.

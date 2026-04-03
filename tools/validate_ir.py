@@ -184,11 +184,21 @@ def main():
 
     sr = sr_dry
 
+    # The Pico only processed the first N seconds of the dry recording.
+    # Infer N from the wet output: truncated_len = len(wet) - len(ir) + 1
+    dry_embedded_len = len(wet) - len(ir) + 1
+    if dry_embedded_len < len(dry):
+        _info(f"Pico processed first {dry_embedded_len/sr:.2f}s of dry input "
+              f"(full file is {len(dry)/sr:.2f}s) — truncating for reference checks")
+        dry_embedded = dry[:dry_embedded_len]
+    else:
+        dry_embedded = dry
+
     # ------------------------------------------------------------------
-    # Check 1 — output length = len(dry) + len(ir) - 1
+    # Check 1 — output length = len(dry_embedded) + len(ir) - 1
     # ------------------------------------------------------------------
-    print("\nCheck 1: output length (should be len(dry) + len(ir) - 1)")
-    expected_len = len(dry) + len(ir) - 1
+    print("\nCheck 1: output length (should be len(dry_embedded) + len(ir) - 1)")
+    expected_len = len(dry_embedded) + len(ir) - 1
     diff_frames  = len(wet) - expected_len
     if abs(diff_frames) <= 1:      # allow ±1 for rounding in convolver flush
         _pass(f"len(wet)={len(wet)}  expected={expected_len}  diff={diff_frames:+d}")
@@ -214,7 +224,7 @@ def main():
     # Check 3 — spectral shape differs (qualitative)
     # ------------------------------------------------------------------
     print("\nCheck 3: spectral shape change")
-    freqs, dry_db = _mag_spectrum_db(dry, sr)
+    freqs, dry_db = _mag_spectrum_db(dry_embedded, sr)
     _,     wet_db = _mag_spectrum_db(wet, sr)
     spectral_diff = np.mean(np.abs(wet_db - dry_db))
     _info(f"Mean |ΔdB| across spectrum: {spectral_diff:.2f} dB")
@@ -229,7 +239,7 @@ def main():
     print("\nCheck 4: reference convolution (Python FFT vs Pico output)")
     # Use IR as-is — gen_audio_arrays.py stores it without normalization,
     # and offline_test.cpp passes ir_samples directly to convolver.init().
-    ref = _reference_convolve(dry, ir)
+    ref = _reference_convolve(dry_embedded, ir)
     # Clamp + quantise to 16-bit (mirror what the Pico does)
     ref_clamp = np.clip(ref, -1.0, 1.0)
     ref_q16   = np.round(ref_clamp * 32767.0) / 32767.0
@@ -251,7 +261,7 @@ def main():
     # ------------------------------------------------------------------
     print(f"\nCheck 5: generating visualisation → {args.plot}")
 
-    t_dry = np.linspace(0, len(dry) / sr, len(dry))
+    t_dry = np.linspace(0, len(dry_embedded) / sr, len(dry_embedded))
     t_wet = np.linspace(0, len(wet) / sr, len(wet))
     t_ref = np.linspace(0, len(ref_q16) / sr, len(ref_q16))
 
@@ -278,7 +288,7 @@ def main():
 
     # --- Row 0, col 0: dry waveform ----------------------------------------
     ax = fig.add_subplot(gs[0, 0])
-    ax.plot(t_dry, dry, color=ACCENT_DRY, lw=0.4, alpha=0.85)
+    ax.plot(t_dry, dry_embedded, color=ACCENT_DRY, lw=0.4, alpha=0.85)
     ax.set_xlabel("time (s)")
     ax.set_ylabel("amplitude")
     _style_ax(ax, "Dry input (piezo)")

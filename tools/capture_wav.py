@@ -31,7 +31,11 @@ Setup (first time):
 Usage (activate venv first):
   cd tools
   source .venv/bin/activate
-  python3 capture_wav.py <uart_device> <output.wav>
+  python3 capture_wav.py <uart_device> [output.wav]
+       [--guitar {garrison,tanglewood}] [--duration SECONDS]
+
+If output.wav is omitted, the filename is auto-generated:
+  output/output_<guitar>-<duration>s-<YYYYMMDD>.wav
 
 The Pico communicates over UART via the debug probe (GPIO 0 TX, GPIO 1 RX).
 The debug probe exposes this as a USB CDC serial port (usbmodem) at 115200 baud.
@@ -43,21 +47,33 @@ Finding the UART device on macOS:
    Pico's own USB is connected — offline_test has USB CDC disabled)
 """
 
+import argparse
+import datetime
+import os
 import sys
 import struct
 import time
 
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <device> <output.wav>")
-        print()
-        print("Finding the device on macOS:")
-        print("  ls /dev/cu.usbmodem*")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Capture WAV output from offline_test firmware")
+    parser.add_argument('device', help='UART device, e.g. /dev/cu.usbmodem101')
+    parser.add_argument('output', nargs='?', help='Output WAV path (auto-generated if omitted)')
+    parser.add_argument('--guitar', choices=['garrison', 'tanglewood'], default='garrison',
+                        help='Guitar used in this build (for output filename)')
+    parser.add_argument('--duration', type=int, default=20,
+                        help='Duration embedded in firmware in seconds (for output filename)')
+    args = parser.parse_args()
 
-    device   = sys.argv[1]
-    out_path = sys.argv[2]
+    device = args.device
+    if args.output:
+        out_path = args.output
+    else:
+        date_str = datetime.date.today().strftime('%Y%m%d')
+        out_dir  = os.path.join(os.path.dirname(__file__), 'output')
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f'output_{args.guitar}-{args.duration}s-{date_str}.wav')
+        print(f"Output: {out_path}")
 
     try:
         import serial

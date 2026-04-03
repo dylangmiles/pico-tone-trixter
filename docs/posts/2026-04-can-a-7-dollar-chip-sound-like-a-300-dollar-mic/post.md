@@ -10,7 +10,7 @@ Compare a piezo pickup directly to a studio microphone on the same guitar and th
 
 <audio controls>
   <source src="assets/garrison-piezo-20260320.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/garrison-piezo-20260320.wav">Raw piezo — Garrison acoustic, undersaddle pickup</a>
+  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/garrison-piezo-20260320.wav">Raw piezo — Garrison acoustic, undersaddle pickup (20s)</a>
 </audio>
 
 That's what most acoustic-electric guitars sound like through a PA or into a recording interface.
@@ -77,18 +77,18 @@ The algorithm went from 36% over budget to 7× headroom in a single hardware swa
 
 ## Does It Actually Work?
 
-To validate before wiring up real-time hardware, I ran an offline test: embedded 7.9 seconds of piezo recording directly in the firmware, processed it through the convolver, and streamed the result back over UART to the host.
+To validate before wiring up real-time hardware, I ran an offline test: embedded 20 seconds of piezo recording directly in the firmware, processed it through the convolver, and streamed the result back over UART to the host.
 
 **The result:**
 
 <audio controls>
-  <source src="assets/output_twostage-20260401.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/output_twostage-20260401.wav">Processed output — same recording, IR applied on Pico 2</a>
+  <source src="assets/output_garrison-20260403.wav" type="audio/wav">
+  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/output_garrison-20260403.wav">Processed output — same recording, IR applied on Pico 2 (20s)</a>
 </audio>
 
 The validation plot below shows the frequency response before and after — the IR is clearly reshaping the signal, and the Pico's output matches a Python reference convolution within 2% RMS error:
 
-![IR validation — frequency response and waveform comparison](assets/ir_validation-20260401.png)
+![IR validation — frequency response and waveform comparison](assets/ir_validation-20260403.png)
 
 Six automated checks run after every capture: output length, signal modification, spectral shape change, and numerical accuracy against a Python reference. All pass.
 
