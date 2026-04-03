@@ -10,7 +10,7 @@ Compare a piezo pickup directly to a studio microphone on the same guitar and th
 
 <audio controls>
   <source src="assets/garrison-piezo-20260320.wav" type="audio/wav">
-  <a href="assets/garrison-piezo-20260320.wav">Raw piezo — Garrison acoustic, undersaddle pickup</a>
+  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/garrison-piezo-20260320.wav">Raw piezo — Garrison acoustic, undersaddle pickup</a>
 </audio>
 
 That's what most acoustic-electric guitars sound like through a PA or into a recording interface.
@@ -83,7 +83,7 @@ To validate before wiring up real-time hardware, I ran an offline test: embedded
 
 <audio controls>
   <source src="assets/output_twostage-20260401.wav" type="audio/wav">
-  <a href="assets/output_twostage-20260401.wav">Processed output — same recording, IR applied on Pico 2</a>
+  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/output_twostage-20260401.wav">Processed output — same recording, IR applied on Pico 2</a>
 </audio>
 
 The validation plot below shows the frequency response before and after — the IR is clearly reshaping the signal, and the Pico's output matches a Python reference convolution within 2% RMS error:
