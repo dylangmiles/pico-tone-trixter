@@ -1,49 +1,72 @@
-# pico-tone-trixter
+# Tone Trixter
 
-Real-time audio DSP on the Raspberry Pi Pico (RP2040). Generates a 440 Hz sine wave, passes it through an FFT convolution reverb engine running on Core 1, and outputs stereo I2S audio.
+A guitar pedal that makes a piezo pickup sound like a studio microphone — in real-time, on a $7 chip.
 
-## Architecture
+Piezo pickups are cheap and reliable but have a characteristic harsh, nasal "quack" that EQ alone can't fix. Tone Trixter applies an **acoustic body impulse response** (IR) to the live piezo signal using FFT convolution, transforming it to match a condenser microphone placed in front of the same guitar.
 
-### Dual-core pipeline
+**Status:** DSP pipeline validated on RP2350. Prototype hardware (ADC + preamp + DAC) in progress.
+
+---
+
+## How it works
+
+1. Record the same guitar simultaneously through the piezo and a studio microphone
+2. Calculate the transfer function between the two signals — this is the IR
+3. Apply that IR to the live piezo signal in real-time via FFT convolution
+
+The IR captures the acoustic character of the guitar body and the microphone's response. Apply it and the piezo sounds like the mic was in the room.
+
+---
+
+## Hardware
+
+**Processor:** Raspberry Pi Pico 2 (RP2350, dual Cortex-M33 @ 150 MHz, hardware FPU)
+
+**Prototype signal chain:**
+
+```
+Guitar piezo → TL072 preamp → PCM1808 ADC → Pico 2 → CS4344 DAC → output
+```
+
+**V1 target:** ES8388 codec (ADC + DAC + programmable gain amp) replaces the discrete preamp and separate ADC/DAC boards. Single-chip audio path, I2C configurable, battery-powered in a Hammond enclosure.
+
+---
+
+## DSP Architecture
+
+**Algorithm:** [HiFi-LoFi TwoStageFFTConvolver](https://github.com/HiFi-LoFi/FFTConvolver), split across both cores.
 
 | Core | Role |
 |------|------|
-| Core 0 | I2S DMA ping-pong, sine wave generation, IRQ handling |
-| Core 1 | FFT convolution (HiFi-LoFi FFTConvolver, Ooura backend) |
+| Core 0 | I2S DMA ping-pong, head convolution (64-sample blocks, low-latency path) |
+| Core 1 | Tail convolution in background (512-sample segments) |
 
-Core 0 fills a DSP input block each DMA completion and releases a semaphore. Core 1 wakes, runs the convolver, and releases the output semaphore. Core 0 reads the output and converts it to I2S format.
+**IR spec:** 2048 samples at 48 kHz (42.7 ms) — captures guitar body resonance with comfortable CPU headroom.
 
-### Signal chain
+### Confirmed performance on RP2350 (2048-sample IR)
 
-```
-Sine oscillator (440 Hz)
-  → FFT convolution reverb (IR_LENGTH=512 samples @ 44100 Hz)
-    → I2S stereo output (32-bit, 44100 Hz)
-```
+| Stage | Time per call | Budget | Headroom |
+|-------|--------------|--------|----------|
+| Core 0 (head) | 0.60 ms | 1.33 ms | **2.24×** |
+| Core 1 (tail) | 1.50 ms | 10.7 ms | **7.1×** |
 
-### Key parameters
+The RP2350's hardware FPU delivers approximately 24× speedup on the tail convolution vs the RP2040 Cortex-M0+ (which ran at 136% of real-time budget — not usable).
 
-| Parameter | Value |
-|-----------|-------|
-| Sample rate | 44,100 Hz |
-| Block size | 256 samples |
-| IR length | 512 samples (~11.6 ms) |
-| FFT size | 1024-point (Ooura) |
-| I2S word width | 32-bit stereo |
+---
 
-## GPIO pinout
+## IR Capture
 
-| GPIO | Function |
-|------|----------|
-| 0 | UART0 TX (stdio) |
-| 1 | UART0 RX |
-| 26 | I2S DATA |
-| 27 | I2S BCLK |
-| 28 | I2S LRCLK |
+IRs are captured by recording the guitar simultaneously through the piezo and a condenser microphone (no effects on either channel), then computing the transfer function via deconvolution.
+
+See [docs/ir_capture_guide.md](docs/ir_capture_guide.md) for the full methodology.
+
+Current IR: Garrison acoustic, NT1-A condenser, UA Gigcaster 8, 2048 samples @ 48 kHz.
+
+---
 
 ## Build
 
-Uses CLion's cmake-build-debug directory with ninja:
+Requires Pico SDK 2.x at `$PICO_SDK_PATH` and ARM GCC toolchain.
 
 ```sh
 cd cmake-build-debug
@@ -53,27 +76,47 @@ ninja
 
 Output: `cmake-build-debug/pico_tone_trixter.uf2`
 
-## Flashing
+Flash via debug probe using CLion's **Debug on Pico** (OpenOCD Download & Run). See `openocd.cfg`.
 
-Via debug probe (Raspberry Pi Debug Probe / CMSIS-DAP) using CLion's **Debug on Pico** (OpenOCD Download & Run) configuration. See `openocd.cfg`.
+### Offline IR test
 
-The `openocd.cfg` includes a `gdb-attach` hook that resumes Core 1 after the GDB session starts — without it, Core 1 is left halted by the debugger and the pipeline stalls.
-
-## Debug output (UART)
-
-Connect at 115200 baud via the debug probe's virtual UART:
+To validate IR processing without live hardware:
 
 ```sh
-screen /dev/tty.usbmodem* 115200
+# Build offline test target
+cmake -DOFFLINE_TEST=ON -DOFFLINE_TEST_TWO_STAGE=ON ..
+ninja
+
+# Flash, then capture output over UART
+python3 tools/capture_wav.py
+
+# Validate against Python reference convolution
+python3 tools/validate_ir.py
 ```
 
-The main loop prints `frame`, `blocks` (Core 1 completions), `cp` (Core 1 checkpoint), and `dma_irq` (DMA IRQ count) every 400 ms.
+Six automated checks run: output length, signal modification, spectral shape, and numerical accuracy (target: <2% RMS error vs Python reference). All pass on RP2350.
 
-## Performance
+---
 
-| Metric | Value |
-|--------|-------|
-| Required | 172 blocks/sec (real-time) |
-| Current | ~62 blocks/sec (~36% real-time) |
+## GPIO Pinout
 
-The gap is due to the Ooura FFT running in software float on a no-FPU Cortex-M0+. Optimisation is in progress.
+| GPIO | Function |
+|------|----------|
+| 0 | UART0 TX (stdio @ 115200) |
+| 1 | UART0 RX |
+| 26 | I2S DATA |
+| 27 | I2S BCLK |
+| 28 | I2S LRCLK |
+
+---
+
+## Project Documentation
+
+- [docs/BOM.md](docs/BOM.md) — bill of materials, prototype vs V1 strategy
+- [docs/sourcing.md](docs/sourcing.md) — component sourcing (South Africa + international)
+- [docs/ir_capture_guide.md](docs/ir_capture_guide.md) — IR capture methodology
+- [docs/content.md](docs/content.md) — article/post series tracking
+
+---
+
+*Built in Cape Town, South Africa.*
