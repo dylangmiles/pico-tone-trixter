@@ -112,10 +112,7 @@ Six automated checks run: output length, signal modification, spectral shape, an
 
 ## Project Documentation
 
-- [docs/BOM.md](docs/BOM.md) — bill of materials, prototype vs V1 strategy
-- [docs/sourcing.md](docs/sourcing.md) — component sourcing (South Africa + international)
 - [docs/ir_capture_guide.md](docs/ir_capture_guide.md) — IR capture methodology
-- [docs/content.md](docs/content.md) — article/post series tracking
 
 ---
 
