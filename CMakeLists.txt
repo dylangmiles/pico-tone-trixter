@@ -139,3 +139,24 @@ endif()
 pico_add_extra_outputs(offline_test)
 pico_enable_stdio_usb(offline_test 0)
 pico_enable_stdio_uart(offline_test 1)
+
+# ============================================================
+# PCM1808 ADC validation test — captures live I2S audio and
+# streams it as WAV over UART for host-side analysis.
+# ============================================================
+add_executable(pcm1808_test
+    audio/pcm1808_test.cpp
+)
+pico_generate_pio_header(pcm1808_test
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in.pio
+)
+target_include_directories(pcm1808_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(pcm1808_test
+    pico_stdlib
+    hardware_pio
+    hardware_dma
+    hardware_clocks
+)
+pico_add_extra_outputs(pcm1808_test)
+pico_enable_stdio_usb(pcm1808_test 0)
+pico_enable_stdio_uart(pcm1808_test 1)

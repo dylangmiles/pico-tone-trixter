@@ -1,0 +1,45 @@
+;
+; i2s_in.pio — I2S master input driver for PCM1808
+;
+; Pico 2 drives BCK and LRCK (master). PCM1808 drives DOUT (slave).
+;
+; Format: left-justified (FMT=HIGH on PCM1808, MD0=MD1=GND for slave).
+;   LRCK transitions on BCK falling edge.
+;   PCM1808 presents new bit on BCK falling; bit is stable on BCK rising.
+;   Pico samples DOUT on BCK rising edge.
+;
+; Pin assignments (defined in pcm1808_test.cpp):
+;   side_set[0] = BCK   (I2S_IN_BCK_PIN)
+;   side_set[1] = LRCK  (I2S_IN_BCK_PIN + 1)
+;   in  pin     = DOUT  (I2S_IN_DATA_PIN)
+;
+; ISR: shift LEFT, autopush at 32.
+;   First bit received → ISR[31] (MSB). After 32 shifts, word is pushed.
+;   PCM1808 sends 24 audio bits then 8 zeros (LSB padding).
+;   To get signed 24-bit value from pushed word: (int32_t)word >> 8
+;
+; DMA reads produce interleaved stereo: L word, R word, L word, ...
+;
+; PIO clock = 2 × BCK = 2 × (48000 × 64) = 6.144 MHz
+; clkdiv = clk_sys / 6144000  (≈ 24.41 for 150 MHz sys clock)
+
+.program i2s_in
+.side_set 2
+
+public entry_point:
+    set x, 30           side 0b00   ; BCK=0, LRCK=0, x=30
+
+.wrap_target
+; ---- Left channel (LRCK=0) ----
+left_bit:
+    in pins, 1          side 0b01   ; BCK rises: data stable, sample DOUT
+    jmp x-- left_bit    side 0b00   ; BCK falls: PCM1808 outputs next bit, loop if x>0
+    in pins, 1          side 0b01   ; 32nd left bit — BCK rises, LRCK still 0
+    set x, 30           side 0b10   ; BCK falls, LRCK→1: right channel starts
+; ---- Right channel (LRCK=1) ----
+right_bit:
+    in pins, 1          side 0b11   ; BCK rises: sample DOUT, LRCK=1
+    jmp x-- right_bit   side 0b10   ; BCK falls: loop if x>0, LRCK=1
+    in pins, 1          side 0b11   ; 32nd right bit — BCK rises, LRCK=1
+    set x, 30           side 0b00   ; BCK falls, LRCK→0: left channel starts
+.wrap
