@@ -156,7 +156,34 @@ target_link_libraries(pcm1808_test
     hardware_pio
     hardware_dma
     hardware_clocks
+    hardware_resets
 )
 pico_add_extra_outputs(pcm1808_test)
 pico_enable_stdio_usb(pcm1808_test 0)
 pico_enable_stdio_uart(pcm1808_test 1)
+
+# ============================================================
+# Transparent passthrough test — PCM1808 ADC → Pico 2 → CS4344 DAC.
+# Validates the complete real-time signal chain with no DSP processing.
+# ============================================================
+add_executable(passthrough_test
+    audio/passthrough_test.cpp
+    i2s/i2s.c
+)
+pico_generate_pio_header(passthrough_test
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
+)
+pico_generate_pio_header(passthrough_test
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in.pio
+)
+target_include_directories(passthrough_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(passthrough_test
+    pico_stdlib
+    hardware_pio
+    hardware_dma
+    hardware_clocks
+    hardware_irq
+)
+pico_add_extra_outputs(passthrough_test)
+pico_enable_stdio_usb(passthrough_test 0)
+pico_enable_stdio_uart(passthrough_test 1)
