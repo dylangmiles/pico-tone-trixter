@@ -15,9 +15,9 @@ Hardware connections between the Raspberry Pi Pico 2 (RP2350) and the ES8388 aud
 | GP6       | 9        | SDA        | I²C data | With ~4.7kΩ pull-up |
 | GP7       | 10       | SCL        | I²C clock | With ~4.7kΩ pull-up |
 | GP21      | 27       | MCLK       | 12.288 MHz master clock | 100Ω series resistor, short wire |
-| GP26      | 31       | DIN        | DAC I2S data (Pico → ES8388) | PIO0 drives this |
-| GP27      | 32       | SCLK       | I2S bit clock | Pico is I2S master |
-| GP28      | 34       | LRCLK      | I2S word-select | Pico is I2S master |
+| GP26      | 31       | DIN        | DAC I2S data (Pico → ES8388) | PIO0 drives this, 100Ω series |
+| GP27      | 32       | SCLK       | I2S bit clock | Pico is I2S master, 100Ω series |
+| GP28      | 34       | LRCLK      | I2S word-select | Pico is I2S master, 100Ω series |
 | 3V3 (OUT) | 36       | VDD        | 3.3 V supply | |
 | GND       | 38       | GND        | Common ground | Multiple points recommended |
 
@@ -123,15 +123,21 @@ GP2 ────[100kΩ]────┬────[1µF]──── bias node 
 
 ---
 
-## MCLK Series Resistor
+## Clock Series Resistors
+
+All four I2S clock/data lines between the Pico and the ES8388 have **100 Ω series resistors** at the Pico side:
 
 ```
-GP21 ────[100Ω]──── ES8388 MCLK
+GP21 ────[100Ω]──── ES8388 MCLK    (12.288 MHz)
+GP26 ────[100Ω]──── ES8388 DIN     (DAC data)
+GP27 ────[100Ω]──── ES8388 SCLK    (BCLK, 3.072 MHz)
+GP28 ────[100Ω]──── ES8388 LRCLK   (48 kHz word-select)
 ```
 
-- **100 Ω** series resistor dampens reflections on the 12.288 MHz clock line.
-- Keep the wire **short** (≤ 5 cm ideal) to minimise radiated noise and ringing.
-- `gpio_set_drive_strength(MCLK_PIN, GPIO_DRIVE_STRENGTH_2MA)` in code to reduce edge rates.
+- **100 Ω** dampens reflections on these fast-edged digital lines.
+- Keep wires **short** (≤ 5 cm ideal) to minimise radiated noise and ringing.
+- `gpio_set_drive_strength(MCLK_PIN, GPIO_DRIVE_STRENGTH_2MA)` in code reduces MCLK edge rates further.
+- No series resistor on DOUT (GP5 input) — the ES8388 drives the line; adding resistance here would weaken edges arriving at the Pico's PIO input.
 
 ---
 
