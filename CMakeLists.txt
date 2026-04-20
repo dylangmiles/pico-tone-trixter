@@ -187,3 +187,33 @@ target_link_libraries(passthrough_test
 pico_add_extra_outputs(passthrough_test)
 pico_enable_stdio_usb(passthrough_test 0)
 pico_enable_stdio_uart(passthrough_test 1)
+
+# ============================================================
+# ES8388 unified codec passthrough test — ES8388 ADC → Pico 2 → ES8388 DAC.
+# Replaces PCM1808 + CS4344 with a single ES8388 module.
+# ============================================================
+add_executable(es8388_test
+    audio/es8388_test.cpp
+    audio/es8388.cpp
+    i2s/i2s.c
+)
+pico_generate_pio_header(es8388_test
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
+)
+pico_generate_pio_header(es8388_test
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in_slave.pio
+)
+target_include_directories(es8388_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(es8388_test
+    pico_stdlib
+    hardware_pio
+    hardware_dma
+    hardware_clocks
+    hardware_irq
+    hardware_i2c
+    hardware_resets
+    hardware_pwm
+)
+pico_add_extra_outputs(es8388_test)
+pico_enable_stdio_usb(es8388_test 0)
+pico_enable_stdio_uart(es8388_test 1)

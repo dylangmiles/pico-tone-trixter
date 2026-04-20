@@ -125,6 +125,10 @@ RP2350 hardware FPU (Cortex-M33) expected ~10-20× float speedup. Projected with
 |------|----------|
 | 0 | UART0 TX (stdio @ 115200) |
 | 1 | UART0 RX |
-| 26 | I2S DATA |
-| 27 | I2S BCLK |
-| 28 | I2S LRCLK |
+| 5 | ES8388 DOUT (ADC I2S input) |
+| 6 | ES8388 SDA |
+| 7 | ES8388 SCL |
+| 21 | ES8388 MCLK (12.288 MHz, 100Ω series) |
+| 26 | I2S DATA (DAC out to ES8388 DIN) |
+| 27 | I2S BCLK / ES8388 SCLK |
+| 28 | I2S LRCLK / ES8388 LRCLK |
