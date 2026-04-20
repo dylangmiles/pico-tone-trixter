@@ -15,7 +15,7 @@ Hardware connections between the Raspberry Pi Pico 2 (RP2350) and the ES8388 aud
 | GP6       | 9        | SDA        | I²C data | With ~4.7kΩ pull-up |
 | GP7       | 10       | SCL        | I²C clock | With ~4.7kΩ pull-up |
 | GP21      | 27       | MCLK       | 12.288 MHz master clock | 100Ω series resistor, short wire |
-| GP26      | 31       | DIN        | DAC I2S data (Pico → ES8388) | PIO0 drives this, 100Ω series |
+| GP26      | 31       | DIN        | DAC I2S data (Pico → ES8388) | PIO0 drives this |
 | GP27      | 32       | SCLK       | I2S bit clock | Pico is I2S master, 100Ω series |
 | GP28      | 34       | LRCLK      | I2S word-select | Pico is I2S master, 100Ω series |
 | 3V3 (OUT) | 36       | VDD        | 3.3 V supply | |
@@ -125,19 +125,19 @@ GP2 ────[100kΩ]────┬────[1µF]──── bias node 
 
 ## Clock Series Resistors
 
-All four I2S clock/data lines between the Pico and the ES8388 have **100 Ω series resistors** at the Pico side:
+The three I2S clock lines from the Pico to the ES8388 have **100 Ω series resistors** at the Pico side:
 
 ```
 GP21 ────[100Ω]──── ES8388 MCLK    (12.288 MHz)
-GP26 ────[100Ω]──── ES8388 DIN     (DAC data)
 GP27 ────[100Ω]──── ES8388 SCLK    (BCLK, 3.072 MHz)
 GP28 ────[100Ω]──── ES8388 LRCLK   (48 kHz word-select)
 ```
 
-- **100 Ω** dampens reflections on these fast-edged digital lines.
+- **100 Ω** dampens reflections on these fast-edged clock lines.
 - Keep wires **short** (≤ 5 cm ideal) to minimise radiated noise and ringing.
 - `gpio_set_drive_strength(MCLK_PIN, GPIO_DRIVE_STRENGTH_2MA)` in code reduces MCLK edge rates further.
-- No series resistor on DOUT (GP5 input) — the ES8388 drives the line; adding resistance here would weaken edges arriving at the Pico's PIO input.
+- **DIN (GP26)** has no series resistor — it's slow-edged audio data clocked by SCLK, and the receiver (ES8388) samples it on SCLK edges, so reflections matter less.
+- **DOUT (GP5 input)** has no series resistor — the ES8388 drives the line; adding resistance here would weaken edges arriving at the Pico's PIO input.
 
 ---
 
