@@ -98,7 +98,8 @@ Guitar tip ────[C = 1µF]──── bias node ──── LIN2
    Guitar sleeve ─── GND
 ```
 
-- **C = 1 µF** electrolytic. **Polarity**: `+` (long leg) toward the bias node (1.6 V, higher DC); `−` toward the guitar (ground-referenced).
+- **C = 1 µF**. **Ceramic preferred** (non-polar, lower ESR, no leakage). Electrolytic works as a fallback — if used, `+` (long leg) toward the bias node (1.6 V, higher DC); `−` toward the guitar (ground-referenced).
+- At 1 µF against the 5 kΩ bias-node impedance, the high-pass corner is ~32 Hz — well below audio.
 - Passive pickup signal is small (~50 mVpp for light strumming, up to ~400 mV for hard strums) — no attenuation needed.
 
 ### PWM Test Signal (from GP2)
@@ -118,7 +119,7 @@ GP2 ────[100kΩ]────┬────[1µF]──── bias node 
 ```
 
 - **100 kΩ / 470 Ω divider**: ratio 470/(100000 + 470) ≈ 0.0047 → 3.3 Vpp × 0.0047 ≈ **15 mVpp** at the mid-node.
-- **1 µF cap**: AC-couples the attenuated signal onto the bias node. Polarity: `+` to bias node.
+- **1 µF cap**: AC-couples the attenuated signal onto the bias node. **Ceramic preferred** (non-polar, lower ESR, no leakage — cleaner audio path). Electrolytic works as a fallback — if used, `+` toward the bias node.
 - Result at LIN2: 1.6 V DC ± ~7.5 mV AC — clean small signal, well within ADC linear range.
 
 ---

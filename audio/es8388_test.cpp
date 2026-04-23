@@ -42,6 +42,15 @@
 #define MCLK_PIN        21
 #define ES8388_DOUT_PIN  5
 
+// Cascade-debug scope trigger: goes HIGH the instant sync-loss is detected so
+// the scope can single-trigger with pre-trigger buffer showing pre-cascade state.
+#define CASCADE_TRIG_PIN 15
+
+// 1 kHz PWM test tone on GPIO 2. Set to 0 when feeding real signal (e.g. piezo
+// via TL072) into LIN2 — leaving PWM running can couple into LIN2 through the
+// attenuator network and nearby breadboard rails.
+#define ENABLE_PWM_TEST  0
+
 // ---- Buffers ---------------------------------------------------------------
 static int32_t s_in_buf[2][I2S_BLOCK_SIZE * 2];
 static int32_t s_out_buf[2][I2S_BLOCK_SIZE * 2];
@@ -117,8 +126,10 @@ static void input_dma_irq1_handler(void) {
         const int32_t *src = s_in_buf[i];
         int32_t peak_l = 0, peak_r = 0, min_l = 0x7fffffff, max_l = (int32_t)0x80000000;
         for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
-            int32_t l = src[j * 2];      // left  (LRCLK=0 = even slots)
-            int32_t r = src[j * 2 + 1];  // right (LRCLK=1 = odd slots)
+            // << 1 compensates for the PIO missing the first SCLK rise (which lands on
+            // the LRCLK transition itself). Chip is in LJ format per es8388.cpp config.
+            int32_t l = src[j * 2]     << 1;  // left  (LRCLK=0 = even slots)
+            int32_t r = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
             s_staging_buf[j * 2]     = l;
             s_staging_buf[j * 2 + 1] = l;
             int32_t al = l < 0 ? -l : l;
@@ -192,6 +203,56 @@ static void i2c_setup(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Register-dump helper for cascade debug — read the registers most likely to
+// explain a silent internal mute (ALC, NGATE, DAC mute, power, volumes).
+// ---------------------------------------------------------------------------
+static const struct {
+    uint8_t     addr;
+    const char *name;
+} DUMP_REGS[] = {
+    {0x02, "CHIPPOWER"},
+    {0x03, "ADCPOWER"},
+    {0x04, "DACPOWER"},
+    {0x08, "MASTERMODE"},
+    {0x09, "MICAMP"},
+    {0x0C, "ADCCTRL4"},
+    {0x10, "LADCVOL"},
+    {0x11, "RADCVOL"},
+    {0x12, "ALC1"},
+    {0x13, "ALC2"},
+    {0x14, "ALC3"},
+    {0x15, "ALC4"},
+    {0x16, "NGATE"},
+    {0x19, "DACCTRL3"},
+};
+
+static void dump_regs(i2c_inst_t *i2c, const char *label) {
+    printf("  regs @ %s:", label);
+    for (size_t i = 0; i < sizeof(DUMP_REGS) / sizeof(DUMP_REGS[0]); i++) {
+        uint8_t v = 0;
+        bool ok = es8388_read(i2c, DUMP_REGS[i].addr, &v);
+        printf(" %s=%02X%s", DUMP_REGS[i].name, v, ok ? "" : "?");
+    }
+    printf("\n");
+    fflush(stdout);
+}
+
+// Full register-space dump (0x00-0x35) for cascade debug.  Prints 8 regs per
+// line with "?" suffix on I2C read failure.  Use to catch any register the
+// curated DUMP_REGS list is missing.
+static void dump_all_regs(i2c_inst_t *i2c, const char *label) {
+    printf("  all_regs @ %s:\n", label);
+    for (uint8_t base = 0x00; base <= 0x35; base += 8) {
+        printf("    %02X:", base);
+        for (uint8_t off = 0; off < 8 && (base + off) <= 0x35; off++) {
+            uint8_t v = 0;
+            bool ok = es8388_read(i2c, base + off, &v);
+            printf(" %02X%s", v, ok ? " " : "?");
+        }
+        printf("\n");
+    }
+    fflush(stdout);
+}
 
 int main() {
     stdio_init_all();
@@ -211,6 +272,7 @@ int main() {
     //                          |
     //                         GND
     // 100kΩ/10kΩ divider: ~0.3 Vpp into LIN2, no startup transient.
+#if ENABLE_PWM_TEST
     {
         gpio_set_function(2, GPIO_FUNC_PWM);
         uint slice = pwm_gpio_to_slice_num(2);
@@ -220,6 +282,18 @@ int main() {
         pwm_init(slice, &cfg, true);
         pwm_set_gpio_level(2, 18750 / 2);          // 50% duty cycle = square wave
     }
+#else
+    // PWM disabled — drive GPIO 2 low so the attenuator network doesn't float
+    // and couple noise into LIN2 when an external signal is being tested.
+    gpio_init(2);
+    gpio_set_dir(2, GPIO_OUT);
+    gpio_put(2, 0);
+#endif
+
+    // Cascade-debug scope trigger — idle LOW, rises when sync-loss detected.
+    gpio_init(CASCADE_TRIG_PIN);
+    gpio_set_dir(CASCADE_TRIG_PIN, GPIO_OUT);
+    gpio_put(CASCADE_TRIG_PIN, 0);
 
     // ---- Sine table for 440 Hz boot tone (50% FS amplitude) -----------------
     for (int i = 0; i < 256; i++)
@@ -234,6 +308,7 @@ int main() {
     i2c_bus_recover();
     i2c_setup();
     es8388_sync_cycle(i2c1);
+
     printf("ES8388 init done");
     {
         uint8_t r02, r03, r08, r0C;
@@ -243,6 +318,7 @@ int main() {
                        r02, r03, r08, r0C);
         else    printf("Regs: readback FAILED (SCLK crosstalk)\n");
     }
+    dump_regs(i2c1, "init");
     fflush(stdout);
 
     // ---- DOUT connectivity check -------------------------------------------
@@ -295,11 +371,25 @@ int main() {
     pio_sm_set_enabled(s_in_pio, s_in_sm, true);
     dma_channel_start(s_in_chan[0]);
 
-    printf("Running. irq1/s  stale/s  peak_L       peak_R       span_L\n");
+    printf("Running (quiet mode — diagnostics only on sync loss)\n");
     fflush(stdout);
 
+    // --- UART crosstalk test: buffer last 10 seconds of stats, dump on sync loss ---
+    // Register snapshot order: 0x09 MICAMP, 0x10 LADCVOL, 0x11 RADCVOL,
+    //                          0x12 ALC ctrl, 0x13 ALC2, 0x15 ALC atk/dcy, 0x16 NGATE.
+    static const uint8_t REG_ADDRS[7] = {0x09, 0x10, 0x11, 0x12, 0x13, 0x15, 0x16};
+    struct StatSnap {
+        uint32_t irq1_delta, stale_delta;
+        int32_t  pl, pr;
+        uint32_t span;
+        int32_t  raw[8];
+        uint8_t  regs[7];
+    };
+    static StatSnap hist[10] = {0};
+    int hist_head = 0;
+    int hist_count = 0;
+
     uint32_t last_irq1 = 0, last_stale = 0;
-    int resync_count = 0;
     while (true) {
         sleep_ms(1000);
         uint32_t irq1  = g_irq1_count;
@@ -309,36 +399,56 @@ int main() {
         int32_t  mn    = g_min_l;
         int32_t  mx    = g_max_l;
         uint32_t span  = (uint32_t)(mx - mn);
-        printf("  %6lu  %6lu  pkL=%08lX pkR=%08lX span=%08lX\n",
-               irq1 - last_irq1, stale - last_stale, (uint32_t)pl, (uint32_t)pr, span);
-        printf("  raw:");
-        for (int k = 0; k < 8; k++) printf(" %08lX", (uint32_t)s_staging_buf[k]);
-        printf("\n");
-        fflush(stdout);
+
+        // Capture to ring buffer — NO printf during normal operation (UART silence).
+        StatSnap *s = &hist[hist_head];
+        s->irq1_delta  = irq1 - last_irq1;
+        s->stale_delta = stale - last_stale;
+        s->pl = pl; s->pr = pr; s->span = span;
+        for (int k = 0; k < 8; k++) s->raw[k] = s_staging_buf[k];
+        // Registers have been shown to never drift — skip per-second I2C polls
+        // to avoid SDA/SCL edges coupling into the audio path (fridge buzz).
+        // Regs are still snapshotted into the ring buffer on sync loss below.
+        for (int k = 0; k < 7; k++) s->regs[k] = 0;
+        hist_head = (hist_head + 1) % 10;
+        if (hist_count < 10) hist_count++;
+
         last_irq1  = irq1;
         last_stale = stale;
 
-        // Auto-resync: all samples FFFFFFFF = DOUT stuck HIGH (ES8388 lost I2S sync).
-        bool lost_sync = (mn == (int32_t)0xFFFFFFFF && mx == (int32_t)0xFFFFFFFF);
-        if (lost_sync) {
-            resync_count++;
-            printf("  SYNC LOST (#%d) — attempting resync\n", resync_count);
+        // Live one-line status — pure in-memory reads, no I2C, no audio coupling.
+        printf("live pkL=%08lX pkR=%08lX raw0=%08lX\n",
+               (uint32_t)pl, (uint32_t)pr, (uint32_t)s_staging_buf[0]);
+        fflush(stdout);
+
+        // Sync-loss detection: span == 0 means every sample in the last block was
+        // identical — i.e. the ADC is stuck on any constant (0x00000000, 0xFFFFFFFE,
+        // or a rail). Guard against the legitimate boot state (no audio yet) by
+        // only firing after we've seen a non-zero sample at least once.
+        static bool sync_lost_printed = false;
+        static bool seen_real_sample  = false;
+        if (!seen_real_sample && (pl != 0 || pr != 0)) seen_real_sample = true;
+        bool lost_sync = (span == 0) && seen_real_sample;
+
+        if (lost_sync && seen_real_sample && !sync_lost_printed) {
+            // Fire scope trigger BEFORE any printf — printfs take many ms and
+            // would push the cascade event too far back into the pre-trigger buffer.
+            gpio_put(CASCADE_TRIG_PIN, 1);
+            printf("  --- history leading to SYNC LOST (static samples) ---\n");
+            for (int i = 0; i < hist_count; i++) {
+                int idx = (hist_head + 10 - hist_count + i) % 10;
+                StatSnap *h = &hist[idx];
+                printf("  t-%ds  %6lu  %6lu  pkL=%08lX pkR=%08lX span=%08lX\n",
+                       hist_count - i, h->irq1_delta, h->stale_delta,
+                       (uint32_t)h->pl, (uint32_t)h->pr, h->span);
+                printf("    raw:");
+                for (int k = 0; k < 8; k++) printf(" %08lX", (uint32_t)h->raw[k]);
+                printf("\n");
+            }
+            printf("  SYNC LOST — no auto-resync; investigate root cause\n");
+            dump_regs(i2c1, "sync_lost");
             fflush(stdout);
-
-            pio_sm_set_enabled(s_in_pio, s_in_sm, false);
-            sclk_quiesce();
-            i2c_bus_recover();
-            i2c_setup();
-            es8388_sync_cycle(i2c1);
-
-            // Return DOUT pin to PIO1, then restart input SM cleanly at entry_point.
-            pio_gpio_init(s_in_pio, ES8388_DOUT_PIN);
-            pio_sm_set_consecutive_pindirs(s_in_pio, s_in_sm, ES8388_DOUT_PIN, 1, false);
-            pio_sm_clear_fifos(s_in_pio, s_in_sm);
-            pio_sm_restart(s_in_pio, s_in_sm);
-            pio_sm_exec(s_in_pio, s_in_sm,
-                        pio_encode_jmp(s_in_pio_offset + i2s_in_slave_offset_entry_point));
-            pio_sm_set_enabled(s_in_pio, s_in_sm, true);
+            sync_lost_printed = true;
         }
     }
 }

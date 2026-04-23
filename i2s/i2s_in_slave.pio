@@ -11,6 +11,11 @@
 ;   LRCLK = 1 → right channel MSB first
 ;   Data is stable on SCLK rising edge.
 ;
+; Note: empirically the PIO reads 1 bit late (misses the first rise coincident
+; with LRCLK transition). A << 1 in the IRQ handler (audio/es8388_test.cpp)
+; compensates. A hardware fix would need to sample DOUT at the moment of the
+; LRCLK transition itself, which this wait-based approach can't guarantee.
+;
 ; Pin assignments (set in es8388_test.cpp):
 ;   IN pin 0 = ES8388 DOUT (GPIO 4)
 ;   SCLK     = GPIO 27  (absolute — driven by PIO0, read-only here)
@@ -31,6 +36,9 @@
 .program i2s_in_slave
 
 public entry_point:
+    wait 1 gpio 28          ; startup sync: park on LRCLK high so the next
+                            ; wait 0 catches a true falling edge (not a
+                            ; mid-frame low). Runs once; .wrap skips it.
 .wrap_target
 
 ; ---- Left channel (LRCLK = 0) ----------------------------------------

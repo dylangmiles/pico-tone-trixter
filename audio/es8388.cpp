@@ -68,7 +68,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x19, 0x04);  // DACCONTROL3: mute
     ok &= es8388_write(i2c, 0x01, 0x50);  // CONTROL2: refs on
     ok &= es8388_write(i2c, 0x08, 0x00);  // MASTERMODE: slave
-    ok &= es8388_write(i2c, 0x17, 0x04);  // DACCONTROL1: 24-bit LJ
+    ok &= es8388_write(i2c, 0x17, 0x04);  // DACCONTROL1: original partial-working baseline (bit-layout uncertain)
     ok &= es8388_write(i2c, 0x18, 0x02);  // DACCONTROL2: MCLK/LRCLK=256
     ok &= es8388_write(i2c, 0x1A, 0x00);  // DACCONTROL4: LDAC 0 dB
     ok &= es8388_write(i2c, 0x1B, 0x00);  // DACCONTROL5: RDAC 0 dB
@@ -85,7 +85,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo
-    ok &= es8388_write_verify(i2c, 0x0C, 0x04);  // ADCCONTROL4: 24-bit LJ (verified)
+    ok &= es8388_write_verify(i2c, 0x0C, 0x04);  // ADCCONTROL4: original partial-working baseline (bit-layout uncertain)
 
     ok &= es8388_write(i2c, 0x0D, 0x02);  // ADCCONTROL5: MCLK/LRCLK=256
     ok &= es8388_write(i2c, 0x0F, 0x00);  // ADCCONTROL7: L ADC 0 dB
