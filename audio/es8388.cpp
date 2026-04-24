@@ -77,7 +77,12 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x2A, 0x90);  // DACCONTROL20: right DAC → right mixer, 0dB
     ok &= es8388_write(i2c, 0x2B, 0x80);  // DACCONTROL21: ADC & DAC share LRCK (required for ADC I2S output)
     ok &= es8388_write(i2c, 0x2D, 0x00);  // DACCONTROL23: vroi=0
-    ok &= es8388_write(i2c, 0x04, 0x3C);  // DACPOWER: all four outputs on
+    ok &= es8388_write(i2c, 0x04, 0x3C);  // DACPOWER: all four output enables (bits 5,4,3,2); bits 7,6 are DAC power-down so keep at 0
+    // Output driver volumes default to 0x00 = -45 dB (near-mute). Set all four to 0x1E (0 dB).
+    ok &= es8388_write(i2c, 0x2E, 0x1E);  // LOUT1VOL: 0 dB (default 0x00 = -45 dB)
+    ok &= es8388_write(i2c, 0x2F, 0x1E);  // ROUT1VOL: 0 dB
+    ok &= es8388_write(i2c, 0x30, 0x1E);  // LOUT2VOL: 0 dB
+    ok &= es8388_write(i2c, 0x31, 0x1E);  // ROUT2VOL: 0 dB
     ok &= es8388_write(i2c, 0x19, 0x02);  // DACCONTROL3: unmute, VOLSAME=1
     printf("ES8388 config: ADC\n");
     ok &= es8388_write(i2c, 0x03, 0xFF);  // ADCPOWER: off while configuring
