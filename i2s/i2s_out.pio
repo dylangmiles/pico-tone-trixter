@@ -1,32 +1,66 @@
 ;
-; I2S output PIO program — left-justified 32-bit stereo
+; I2S output PIO program — pico-extras audio_i2s.pio with LRCK transitions
+; delayed by 8 BCLK (= 16 PIO cycles). Phase 1 deterministic at +9 = tiny
+; L-tone, +10 = silent (or also tiny). Phase 2 takes 1-6 had no effect.
+; Sweeping PIO LRCK delay with Phase 1 active to find an N where lock
+; phase = small-clean. Random sweep at +8 had 1/5 small-clean / 4/5 HUGE
+; big-asym, so testing whether deterministic locks land on big-asym (loud
+; recognizable) or somewhere else.
+;
+; Structure: each half-frame (32 OUTs of one channel word) is split into
+;   - pre-transition: 7 in-loop OUTs + 1 post-loop OUT = 8 OUTs with LRCK
+;     in OLD state. The post-loop OUT is where LRCK actually transitions.
+;   - main: 23 in-loop OUTs + 1 post-loop OUT = 24 OUTs with LRCK in NEW state.
+;
+;   8 + 24 = 32 OUTs / channel × 2 channels = 64 OUTs / LRCK period.
+;   Total PIO cycles / LRCK period: 16 + 48 + 16 + 48 = 128 = 1 / 48 kHz at
+;   PIO clock 6.144 MHz.
 ;
 ; side_set[0] = BCLK  (I2S_BCLK_PIN)
 ; side_set[1] = LRCLK (I2S_BCLK_PIN + 1)
 ; out pin     = DATA  (I2S_DATA_PIN)
 ;
 ; Autopull: shift left, threshold 32, auto enabled.
-; DMA feeds interleaved stereo: left word, right word, left word, ...
-;
-; Timing: each bit = 2 PIO cycles (BCLK=0 data-setup, BCLK=1 sample).
-; 32 bits/channel × 2 ch × 2 cycles = 128 PIO cycles per frame.
-; PIO clock = 2 × BCLK = 2 × (sample_rate × 64).
 
 .program i2s_out
 .side_set 2
 
-public entry_point:
-    set x, 30           side 0b01   ; init: x=30 for 32-bit loop, BCLK=1, LRCLK=0
+; First 7 OUTs of HIGH word — LRCK still 0 from the previous LOW slot.
+; LRCK rises at the post-loop OUT (= 8th OUT of HIGH word).
+bitloop1_pre:
+    out pins, 1            side 0b00
+    jmp x-- bitloop1_pre   side 0b01
 
-.wrap_target
-left_bit:
-    out pins, 1         side 0b00   ; drive bit, BCLK=0, LRCLK=0
-    jmp x-- left_bit    side 0b01   ; BCLK=1 (DAC samples), loop while x != 0
-    out pins, 1         side 0b10   ; last left bit, LRCLK transitions high, BCLK=0
-    set x, 30           side 0b11   ; BCLK=1 (clocks last left bit), LRCLK=1, x=30
-right_bit:
-    out pins, 1         side 0b10   ; drive bit, BCLK=0, LRCLK=1
-    jmp x-- right_bit   side 0b11   ; BCLK=1 (DAC samples), loop
-    out pins, 1         side 0b00   ; last right bit, LRCLK transitions low, BCLK=0
-    set x, 30           side 0b01   ; BCLK=1 (clocks last right bit), LRCLK=0, x=30
-.wrap
+    out pins, 1            side 0b10    ; OUT 8 of HIGH, LRCK RISES
+public start_after_pre:
+    set x, 22              side 0b11    ; init bitloop1_main (23 in-loop OUTs)
+
+; OUTs 9-32 of HIGH word — LRCK = 1.
+bitloop1_main:
+    out pins, 1            side 0b10
+    jmp x-- bitloop1_main  side 0b11
+
+    out pins, 1            side 0b10    ; OUT 32 of HIGH (post-loop)
+public start_after_high_main:
+    set x, 6               side 0b11    ; init delay_high (7 in-loop OUTs)
+
+; First 7 OUTs of LOW word — LRCK still 1 from the just-ended HIGH slot.
+; LRCK falls at the post-loop OUT (= 8th OUT of LOW word).
+delay_high:
+    out pins, 1            side 0b10
+    jmp x-- delay_high     side 0b11
+
+    out pins, 1            side 0b00    ; OUT 8 of LOW, LRCK FALLS
+public start_after_delay_high:
+    set x, 22              side 0b01    ; init bitloop0_main (23 in-loop OUTs)
+
+; OUTs 9-32 of LOW word — LRCK = 0.
+bitloop0_main:
+    out pins, 1            side 0b00
+    jmp x-- bitloop0_main  side 0b01
+
+    out pins, 1            side 0b00    ; OUT 32 of LOW (post-loop)
+
+public entry_point:
+    set x, 6               side 0b01    ; init bitloop1_pre (7 in-loop OUTs, LRCK=0)
+                                        ; wraps to top of program

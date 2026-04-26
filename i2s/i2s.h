@@ -21,6 +21,10 @@ typedef void (*i2s_callback_t)(int32_t *buf_done);
  * cb is called from DMA IRQ when each buffer completes; pass NULL to skip. */
 void i2s_output_init(int32_t *buf_a, int32_t *buf_b, i2s_callback_t cb);
 
+/* Program offset of i2s_out program in PIO instruction memory.
+ * Caller adds i2s_out_offset_entry_point to jump into the entry point. */
+unsigned int i2s_pio_offset(void);
+
 /* Incremented in the DMA IRQ handler — diagnostic counter. */
 extern volatile uint32_t g_dma_irq_count;
 

@@ -68,7 +68,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x19, 0x04);  // DACCONTROL3: mute
     ok &= es8388_write(i2c, 0x01, 0x50);  // CONTROL2: refs on
     ok &= es8388_write(i2c, 0x08, 0x00);  // MASTERMODE: slave
-    ok &= es8388_write(i2c, 0x17, 0x04);  // DACCONTROL1: original partial-working baseline (bit-layout uncertain)
+    ok &= es8388_write(i2c, 0x17, 0x18);  // DACCONTROL1: 16-bit WL (bits 5:3=011) + Philips I²S (bits 2:1=00). Switched from 0x1E DSP after scope-confirmed our PIO timing matches Philips spec (MSB at +1 BCLK from LRCK transition, symmetric on both edges). The earlier Philips-silent result was under random-startup; now under deterministic small-clean lock (PIO_JMP_TARGET=2) Philips should match the chip's expected framing.
     ok &= es8388_write(i2c, 0x18, 0x02);  // DACCONTROL2: MCLK/LRCLK=256
     ok &= es8388_write(i2c, 0x1A, 0x00);  // DACCONTROL4: LDAC 0 dB
     ok &= es8388_write(i2c, 0x1B, 0x00);  // DACCONTROL5: RDAC 0 dB

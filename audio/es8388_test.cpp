@@ -33,6 +33,7 @@
 #include "hardware/resets.h"
 #include "hardware/pwm.h"
 #include "i2s/i2s.h"
+#include "i2s_out.pio.h"
 #include "audio/es8388.h"
 #include "i2s_in_slave.pio.h"
 #include <cstring>
@@ -51,6 +52,14 @@
 // attenuator network and nearby breadboard rails.
 #define ENABLE_PWM_TEST  0
 
+// Scope sentinel mode: when non-zero, every output sample is replaced with this
+// constant (skipping boot tone and passthrough). Makes DIN a deterministic
+// per-slot bit pattern for scoping LRCK/SCLK/DIN timing relationships.
+//   0x80000000 → only sign bit set → 1-BCLK pulse per slot at MSB position
+//   0xC0000000 → sign + bit 30 set → 2-BCLK pulse per slot
+//   0           → disabled (normal passthrough_cb behavior)
+#define SCOPE_SENTINEL_VALUE  0u
+
 // ---- Buffers ---------------------------------------------------------------
 static int32_t s_in_buf[2][I2S_BLOCK_SIZE * 2];
 static int32_t s_out_buf[2][I2S_BLOCK_SIZE * 2];
@@ -67,12 +76,26 @@ volatile int32_t  g_peak_r      = 0;
 volatile int32_t  g_min_l       = 0;
 volatile int32_t  g_max_l       = 0;
 
-// Test tone: 440 Hz sine wave plays for ~4 s on boot to verify DAC path.
+// Test tone shape:
+//   0 = sine (production)
+//   1 = triangle (graded sentinel)
+//   2 = DC step test: +half-FS for 2 s, -half-FS for 2 s. (DC-couple scope.)
+//   3 = ~200 Hz square from constants. Alternates +half-FS / -half-FS every 120 samples.
+//   4 = 440 Hz sawtooth: single ramp -peak → +peak over the whole period, sharp drop back.
+//       Splits "any smooth ramp distorts" vs "specifically two-ramp triangle distorts".
+#define BOOT_TONE_SHAPE 1
+
+// Sample format experiment (2026-04-26): if 1, XOR sign bit on each I2S sample
+// to convert 2's complement → offset binary. Tests whether the V/Λ fold-back
+// artifact comes from chip interpreting our 2's-comp data as offset binary.
+#define BOOT_TONE_OFFSET_BINARY 0
 static int32_t  s_sine_table[256];
 static uint32_t g_tone_phase  = 0;
 static uint32_t g_tone_blocks = 0;
 #define TONE_DURATION_BLOCKS 752u   // ~4 s at 188 blocks/s
 #define TONE_PHASE_INC       39370240u  // 440 Hz at 48 kHz: 2^32 * 440 / 48000
+#define TONE_HALF_BLOCKS     376u   // half of TONE_DURATION_BLOCKS, for DC-step test
+#define SQUARE_HALF_SAMPLES  120u   // 48000 / (2 * 120) = 200 Hz square period
 
 // ---------------------------------------------------------------------------
 // SCLK quiesce / resume
@@ -93,18 +116,52 @@ static void sclk_quiesce(void) {
     sleep_us(200);  // let any ringing settle
 }
 
+// PC start-position sweep (Path B option 2). 0 = no jmp (Phase 1 take 2 baseline,
+// ~30% small-clean random). 1-4 select the four valid PC positions where X is
+// initialised correctly for the next loop. Cycle through 1..4 by re-flashing.
+//   1 = entry_point        (offset 15) — TESTED at +8: deterministic L-tiny-tone
+//   2 = start_after_pre    (offset 3)  — mid-HIGH word, LRCK=1
+//   3 = start_after_high_main (offset 7)  — start of LOW word, LRCK=1
+//   4 = start_after_delay_high (offset 11) — mid-LOW word, LRCK=0
+#define PIO_JMP_TARGET 2
+
 static void sclk_resume(void) {
     pio_gpio_init(pio0, I2S_BCLK_PIN);
     pio_gpio_init(pio0, I2S_BCLK_PIN + 1);
-    pio_sm_restart(pio0, 0);   // reset SM to entry_point — clean LRCLK phase for ES8388 lock
+    pio_sm_restart(pio0, 0);
+    pio_sm_clkdiv_restart(pio0, 0);
+#if PIO_JMP_TARGET != 0
+    uint pc;
+  #if PIO_JMP_TARGET == 1
+    pc = i2s_pio_offset() + i2s_out_offset_entry_point;
+  #elif PIO_JMP_TARGET == 2
+    pc = i2s_pio_offset() + i2s_out_offset_start_after_pre;
+  #elif PIO_JMP_TARGET == 3
+    pc = i2s_pio_offset() + i2s_out_offset_start_after_high_main;
+  #elif PIO_JMP_TARGET == 4
+    pc = i2s_pio_offset() + i2s_out_offset_start_after_delay_high;
+  #else
+    #error "PIO_JMP_TARGET must be 0..4"
+  #endif
+    pio_sm_exec(pio0, 0, pio_encode_jmp(pc));
+#endif
     pio_sm_set_enabled(pio0, 0, true);
 }
 
 // ---------------------------------------------------------------------------
 // ES8388 sync helpers (defined after sclk_resume)
 // ---------------------------------------------------------------------------
-// One sync cycle: chippower_cycle → config_only → ADCPOWER=0x00 (quiesced) → sclk_resume → adcpower_resync.
-// SCLK must be quiesced on entry; returns with SCLK running.
+// Path B Phase 2 takes 1-6 all produced the same L-tiny-tone / R-loud-noise
+// regime regardless of: ADCPOWER timing (0/5 µs delay, falling/rising edge,
+// MASTERMODE include/exclude), CHIPPOWER trigger position (pre/post sclk_
+// resume), or DACCONTROL1 format (DSP/Philips). The chip's lock phase is
+// not controllable through register-write timing — it's determined entirely
+// by clock relationships at sclk_resume.
+//
+// Reverted to original sync_cycle. Phase 1 (clkdiv_restart) is the only
+// active Path B change. Now sweeping PIO LRCK delay (+8 / +11 / etc) since
+// it's the only knob that demonstrably shifts the chip's lock phase
+// (previously +9 → tiny tone, +10 → silent).
 static void es8388_sync_cycle(i2c_inst_t *i2c) {
     es8388_chippower_cycle(i2c);
     es8388_config_only(i2c);             // re-apply all config after chippower reset
@@ -153,14 +210,57 @@ static void input_dma_irq1_handler(void) {
 // Output DMA callback (DMA_IRQ_0, from i2s.c).
 // ---------------------------------------------------------------------------
 static void passthrough_cb(int32_t *buf_done) {
+#if SCOPE_SENTINEL_VALUE
+    // Stuff every sample with the sentinel — DIN becomes a known per-slot pattern.
+    const int32_t v = (int32_t)SCOPE_SENTINEL_VALUE;
+    for (int i = 0; i < I2S_BLOCK_SIZE; i++) {
+        buf_done[i * 2]     = v;
+        buf_done[i * 2 + 1] = v;
+    }
+    return;
+#endif
     if (g_tone_blocks < TONE_DURATION_BLOCKS) {
-        g_tone_blocks++;
+#if BOOT_TONE_SHAPE == 2
+        // DC step test: +half-FS for first 2 s, -half-FS for second 2 s.
+        const int32_t v_dc = (g_tone_blocks < TONE_HALF_BLOCKS)
+                             ? (int32_t)0x40000000 : (int32_t)0xC0000000;
         for (int i = 0; i < I2S_BLOCK_SIZE; i++) {
-            int32_t v = s_sine_table[g_tone_phase >> 24];
-            g_tone_phase += TONE_PHASE_INC;
+            buf_done[i * 2]     = v_dc;
+            buf_done[i * 2 + 1] = v_dc;
+        }
+#elif BOOT_TONE_SHAPE == 3
+        // ~200 Hz square from alternating constants.
+        for (int i = 0; i < I2S_BLOCK_SIZE; i++) {
+            int32_t v = ((g_tone_phase / SQUARE_HALF_SAMPLES) & 1u)
+                        ? (int32_t)0xC0000000 : (int32_t)0x40000000;
+            g_tone_phase++;
             buf_done[i * 2]     = v;
             buf_done[i * 2 + 1] = v;
         }
+#elif BOOT_TONE_SHAPE == 4
+        // 440 Hz sawtooth, 50% FS: single ramp -peak → +peak over period, sharp wrap.
+        // phase >> 1 maps 32-bit phase to [0, 0x7FFFFFFF]; subtract 0x40000000 → [-0x40000000, +0x40000000).
+        for (int i = 0; i < I2S_BLOCK_SIZE; i++) {
+            int32_t v = (int32_t)(g_tone_phase >> 1) - (int32_t)0x40000000;
+            g_tone_phase += TONE_PHASE_INC;
+#if BOOT_TONE_OFFSET_BINARY
+            v ^= (int32_t)0x80000000;  // 2's complement → offset binary (sign bit flip)
+#endif
+            buf_done[i * 2]     = v;
+            buf_done[i * 2 + 1] = v;
+        }
+#else
+        for (int i = 0; i < I2S_BLOCK_SIZE; i++) {
+            int32_t v = s_sine_table[g_tone_phase >> 24];
+            g_tone_phase += TONE_PHASE_INC;
+#if BOOT_TONE_OFFSET_BINARY
+            v ^= (int32_t)0x80000000;  // 2's complement → offset binary (sign bit flip)
+#endif
+            buf_done[i * 2]     = v;
+            buf_done[i * 2 + 1] = v;
+        }
+#endif
+        g_tone_blocks++;
         return;
     }
     int idx = (buf_done == s_out_buf[0]) ? 0 : 1;
@@ -295,9 +395,17 @@ int main() {
     gpio_set_dir(CASCADE_TRIG_PIN, GPIO_OUT);
     gpio_put(CASCADE_TRIG_PIN, 0);
 
-    // ---- Sine table for 440 Hz boot tone (50% FS amplitude) -----------------
+    // ---- Tone table for 440 Hz boot tone (50% FS amplitude) -----------------
+#if BOOT_TONE_SHAPE == 1
+    for (int i = 0; i < 256; i++) {
+        int32_t v = (i < 128) ? (int32_t)(i * 0x01000000 - 0x40000000)
+                              : (int32_t)(0x40000000 - (i - 128) * 0x01000000);
+        s_sine_table[i] = v;
+    }
+#else
     for (int i = 0; i < 256; i++)
         s_sine_table[i] = (int32_t)(sinf(2.0f * 3.14159265f * i / 256.0f) * 0x40000000);
+#endif
 
     // ---- Start I2S output (SCLK/LRCLK generated by PIO0 SM0) ----------------
     memset(s_out_buf, 0, sizeof(s_out_buf));
@@ -311,11 +419,12 @@ int main() {
 
     printf("ES8388 init done");
     {
-        uint8_t r02, r03, r08, r0C;
+        uint8_t r02, r03, r08, r0C, r17;
         bool rb = es8388_read(i2c1, 0x02, &r02) && es8388_read(i2c1, 0x03, &r03)
-               && es8388_read(i2c1, 0x08, &r08) && es8388_read(i2c1, 0x0C, &r0C);
-        if (rb) printf("Regs: CHIPPOWER=%02X ADCPOWER=%02X MASTERMODE=%02X ADCCONTROL4=%02X\n",
-                       r02, r03, r08, r0C);
+               && es8388_read(i2c1, 0x08, &r08) && es8388_read(i2c1, 0x0C, &r0C)
+               && es8388_read(i2c1, 0x17, &r17);
+        if (rb) printf("Regs: CHIPPOWER=%02X ADCPOWER=%02X MASTERMODE=%02X ADCCONTROL4=%02X DACCONTROL1=%02X\n",
+                       r02, r03, r08, r0C, r17);
         else    printf("Regs: readback FAILED (SCLK crosstalk)\n");
     }
     dump_regs(i2c1, "init");
@@ -370,6 +479,25 @@ int main() {
 
     pio_sm_set_enabled(s_in_pio, s_in_sm, true);
     dma_channel_start(s_in_chan[0]);
+
+    // === REGIME CALIBRATION (es8388_pio_startup_lock_2026-04-26 task #20) ===
+    // Wait for 4 input DMA blocks (~22 ms at 256 samples/block / 48 kHz), then
+    // snapshot g_peak_l / g_peak_r. User power-cycles, scopes LOUT to classify
+    // regime (small-clean / small-asym / big-asym), and correlates with the
+    // peaks reported here. Goal: find a threshold that separates small-clean
+    // from the other regimes for the closed-loop retry detector.
+    uint32_t cal_start_irq = g_irq1_count;
+    uint32_t cal_t_start   = time_us_32();
+    while ((g_irq1_count - cal_start_irq) < 4 &&
+           (time_us_32() - cal_t_start) < 100000) {
+        tight_loop_contents();
+    }
+    printf("[cal] blocks=%lu peakL=%08lx peakR=%08lx span=%08lx raw0=%08lx raw1=%08lx\n",
+           (unsigned long)(g_irq1_count - cal_start_irq),
+           (uint32_t)g_peak_l, (uint32_t)g_peak_r,
+           (uint32_t)(g_max_l - g_min_l),
+           (uint32_t)s_staging_buf[0], (uint32_t)s_staging_buf[1]);
+    fflush(stdout);
 
     printf("Running (quiet mode — diagnostics only on sync loss)\n");
     fflush(stdout);
