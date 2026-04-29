@@ -68,8 +68,8 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x19, 0x04);  // DACCONTROL3: mute
     ok &= es8388_write(i2c, 0x01, 0x50);  // CONTROL2: refs on
     ok &= es8388_write(i2c, 0x08, 0x00);  // MASTERMODE: slave
-    ok &= es8388_write(i2c, 0x17, 0x18);  // DACCONTROL1: 16-bit WL (bits 5:3=011) + Philips I²S (bits 2:1=00). Switched from 0x1E DSP after scope-confirmed our PIO timing matches Philips spec (MSB at +1 BCLK from LRCK transition, symmetric on both edges). The earlier Philips-silent result was under random-startup; now under deterministic small-clean lock (PIO_JMP_TARGET=2) Philips should match the chip's expected framing.
-    ok &= es8388_write(i2c, 0x18, 0x02);  // DACCONTROL2: MCLK/LRCLK=256
+    ok &= es8388_write(i2c, 0x17, 0x20);  // DACCONTROL1: 32-bit WL (bits 5:3=100) + Philips I²S (bits 2:1=00). Was 0x18 (16-bit Philips, validated end-to-end including chain-gain/latency tests on 2026-04-27). Stepping up to 32-bit now that the chip is bit-aligned and the chain is clean. PIO timing unchanged (32 BCLKs per channel slot; chip just fills all 32 with audio instead of 16 + 16 zeros).
+    ok &= es8388_write(i2c, 0x18, 0x20);  // DACCONTROL2: bit5=DACFsMode=1 (double speed, 50–100 kHz), bits[4:0]=DACFsRatio=00000 (MCLK/LRCK=128 → 96 kHz at 12.288 MHz MCLK). Was 0x02 (256x ratio, single speed = 48 kHz). FsMode bit is required for the chip's internal interpolation filter to use double-speed coefficients.
     ok &= es8388_write(i2c, 0x1A, 0x00);  // DACCONTROL4: LDAC 0 dB
     ok &= es8388_write(i2c, 0x1B, 0x00);  // DACCONTROL5: RDAC 0 dB
     ok &= es8388_write(i2c, 0x26, 0x00);  // DACCONTROL16: DAC audio path, no LIN bypass
@@ -86,13 +86,24 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x19, 0x02);  // DACCONTROL3: unmute, VOLSAME=1
     printf("ES8388 config: ADC\n");
     ok &= es8388_write(i2c, 0x03, 0xFF);  // ADCPOWER: off while configuring
-    ok &= es8388_write(i2c, 0x09, 0x00);  // ADCCONTROL1: PGA 0dB L+R
+    // ADCCONTROL1 (reg 0x09): bits[7:4]=MicAmpL, bits[3:0]=MicAmpR.
+    // Each nibble: 0=0dB, 1=+3, 2=+6, 3=+9, ... 8=+24dB. 0x00 = 0 dB L+R:
+    // ADC FS = ~1.0 Vrms — maximum headroom for chip-only validation with
+    // GPIO2 PWM test tone (~300 mV pp / ~150 mV peak square at LIN2). Output
+    // will be −9 dB vs LIN2 (chip's natural ADC-FS to DAC-FS unity offset);
+    // we accept that for this test since we're proving shape matching, not
+    // unity gain. Bring back to 0x22 (+6 dB) when re-introducing analog input.
+    ok &= es8388_write(i2c, 0x09, 0x77);
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo
-    ok &= es8388_write_verify(i2c, 0x0C, 0x04);  // ADCCONTROL4: original partial-working baseline (bit-layout uncertain)
+    // ADCCONTROL4: 32-bit Philips. Layout (per ES8388 user guide reg 12):
+    // [7:6]=DATSEL=00 (channels independent), [5]=ADCLRP=0 (normal polarity),
+    // [4:2]=ADCWL=100 (32-bit), [1:0]=ADCFORMAT=00 (I2S/Philips). Was 0x0C
+    // (16-bit Philips) — moving to 32-bit end-to-end now that chain is validated.
+    ok &= es8388_write_verify(i2c, 0x0C, 0x10);
 
-    ok &= es8388_write(i2c, 0x0D, 0x02);  // ADCCONTROL5: MCLK/LRCLK=256
+    ok &= es8388_write(i2c, 0x0D, 0x20);  // ADCCONTROL5: bit5=ADCFsMode=1 (double speed), bits[4:0]=ADCFsRatio=00000 (MCLK/LRCK=128 → 96 kHz). Mirrors DACCONTROL2; FsMode required for proper decimation-filter coefficients in 50–100 kHz range.
     ok &= es8388_write(i2c, 0x0F, 0x00);  // ADCCONTROL7: L ADC 0 dB
     ok &= es8388_write(i2c, 0x10, 0x00);  // ADCCONTROL8: R ADC 0 dB
     ok &= es8388_write(i2c, 0x11, 0x00);  // ADCCONTROL9: ALC/volume init (btstack initialises this)

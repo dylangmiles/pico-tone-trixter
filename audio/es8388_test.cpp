@@ -92,10 +92,10 @@ volatile int32_t  g_max_l       = 0;
 static int32_t  s_sine_table[256];
 static uint32_t g_tone_phase  = 0;
 static uint32_t g_tone_blocks = 0;
-#define TONE_DURATION_BLOCKS 752u   // ~4 s at 188 blocks/s
-#define TONE_PHASE_INC       39370240u  // 440 Hz at 48 kHz: 2^32 * 440 / 48000
-#define TONE_HALF_BLOCKS     376u   // half of TONE_DURATION_BLOCKS, for DC-step test
-#define SQUARE_HALF_SAMPLES  120u   // 48000 / (2 * 120) = 200 Hz square period
+#define TONE_DURATION_BLOCKS 1504u  // ~4 s at 376 blocks/s (96 kHz / 256 samples)
+#define TONE_PHASE_INC       19685120u // 440 Hz at 96 kHz: 2^32 * 440 / 96000
+#define TONE_HALF_BLOCKS     752u   // half of TONE_DURATION_BLOCKS, for DC-step test
+#define SQUARE_HALF_SAMPLES  240u   // 96000 / (2 * 240) = 200 Hz square period
 
 // ---------------------------------------------------------------------------
 // SCLK quiesce / resume
@@ -183,8 +183,11 @@ static void input_dma_irq1_handler(void) {
         const int32_t *src = s_in_buf[i];
         int32_t peak_l = 0, peak_r = 0, min_l = 0x7fffffff, max_l = (int32_t)0x80000000;
         for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
-            // << 1 compensates for the PIO missing the first SCLK rise (which lands on
-            // the LRCLK transition itself). Chip is in LJ format per es8388.cpp config.
+            // << 1 is sign-recovery, not amplitude. PIO empirically captures a
+            // leading "delay zero" in bit 31 with audio bits 31..1 in bits 30..0;
+            // shift-left puts the original sign bit back into bit 31. Without
+            // this shift, negative samples read as huge positive values
+            // (rectification → 1.66 V pk-pk sawtooth at idle, 2026-04-27).
             int32_t l = src[j * 2]     << 1;  // left  (LRCLK=0 = even slots)
             int32_t r = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
             s_staging_buf[j * 2]     = l;
