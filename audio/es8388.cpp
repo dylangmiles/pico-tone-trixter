@@ -93,7 +93,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     // will be −9 dB vs LIN2 (chip's natural ADC-FS to DAC-FS unity offset);
     // we accept that for this test since we're proving shape matching, not
     // unity gain. Bring back to 0x22 (+6 dB) when re-introducing analog input.
-    ok &= es8388_write(i2c, 0x09, 0x77);
+    ok &= es8388_write(i2c, 0x09, 0x22);
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo
