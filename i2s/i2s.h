@@ -5,9 +5,12 @@ extern "C" {
 
 #include <stdint.h>
 
-/* GPIO assignments — chosen to avoid UART (GPIO 0,1) and PWM audio (GPIO 2). */
-#define I2S_DATA_PIN    26
-#define I2S_BCLK_PIN    27   /* LRCLK = I2S_BCLK_PIN + 1 = 28 */
+/* GPIO assignments — chosen for proto-board layout: clocks on Pico RIGHT side
+ * (BCLK 16, LRCLK 17, MCLK 21), data on LEFT side (DIN 14, DOUT 15) so audio
+ * data lines run separated from clocks. PIO sideset constraint: LRCLK = BCLK + 1.
+ * See docs/proto_board_layout_2026-05-01.md (in private repo) for routing rationale. */
+#define I2S_DATA_PIN    14   /* DIN: Pico → ES8388 (LEFT side) */
+#define I2S_BCLK_PIN    16   /* BCLK; LRCLK = I2S_BCLK_PIN + 1 = 17 (RIGHT side) */
 
 #define I2S_SAMPLE_RATE 96000
 #define I2S_BLOCK_SIZE  256  /* mono samples per DMA block */

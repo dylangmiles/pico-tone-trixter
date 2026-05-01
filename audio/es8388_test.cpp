@@ -41,11 +41,11 @@
 #include <cmath>
 
 #define MCLK_PIN        21
-#define ES8388_DOUT_PIN  5
+#define ES8388_DOUT_PIN 15   /* Was GP5; moved to GP15 for proto-board layout (top of LEFT). */
 
 // Cascade-debug scope trigger: goes HIGH the instant sync-loss is detected so
 // the scope can single-trigger with pre-trigger buffer showing pre-cascade state.
-#define CASCADE_TRIG_PIN 15
+#define CASCADE_TRIG_PIN 22  /* Was GP15; relocated since GP15 is now ES8388 DOUT. */
 
 // 1 kHz PWM test tone on GPIO 2. Set to 0 when feeding real signal (e.g. piezo
 // via TL072) into LIN2 — leaving PWM running can couple into LIN2 through the

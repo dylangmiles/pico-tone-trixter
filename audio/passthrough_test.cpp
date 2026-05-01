@@ -24,7 +24,9 @@
  *   PCM1808 MD1  → GND           PCM1808 DOUT → GPIO 4
  *   PCM1808 FMT  → 3.3V          PCM1808 VINL → TL072 SOUT
  *
- * WaveShare Pico Audio (CS4344) on GPIO 26/27/28.
+ * WaveShare Pico Audio (CS4344) on GPIO 14/16/17 (DATA / BCLK / LRCLK)
+ * — moved 2026-05-01 to free GPIO 26-28 and tighten proto-board layout.
+ * Re-wire breadboard if running this test target.
  */
 
 #include "pico/stdlib.h"

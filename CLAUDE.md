@@ -121,14 +121,17 @@ RP2350 hardware FPU (Cortex-M33) expected ~10-20× float speedup. Projected with
 
 ## GPIO pinout
 
-| GPIO | Function |
-|------|----------|
-| 0 | UART0 TX (stdio @ 115200) |
-| 1 | UART0 RX |
-| 5 | ES8388 DOUT (ADC I2S input) |
-| 6 | ES8388 SDA |
-| 7 | ES8388 SCL |
-| 21 | ES8388 MCLK (12.288 MHz, 100Ω series) |
-| 26 | I2S DATA (DAC out to ES8388 DIN) |
-| 27 | I2S BCLK / ES8388 SCLK |
-| 28 | I2S LRCLK / ES8388 LRCLK |
+Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOUT, DIN, SDA, SCL) now on Pico LEFT side; all clocks (BCLK, LRCLK, MCLK) on RIGHT side. See `pico-tone-trixter-private/docs/proto_board_layout_2026-05-01.md` for routing rationale.
+
+| GPIO | Function | Side (mirrored bottom view) |
+|------|----------|---|
+| 0 | UART0 TX (stdio @ 115200) | LEFT |
+| 1 | UART0 RX | LEFT |
+| 12 | ES8388 SDA | LEFT |
+| 13 | ES8388 SCL | LEFT |
+| 14 | I2S DATA / DIN (DAC out → ES8388 DIN) | LEFT |
+| 15 | ES8388 DOUT (ADC I2S input → Pico) | LEFT |
+| 16 | I2S BCLK / ES8388 SCLK | RIGHT |
+| 17 | I2S LRCLK / ES8388 LRCLK (= BCLK + 1, PIO sideset) | RIGHT |
+| 21 | ES8388 MCLK (12.288 MHz, hardware CLK_GPOUT0, 100Ω series) | RIGHT |
+| 22 | CASCADE_TRIG_PIN (debug scope trigger, es8388_test only) | RIGHT |
