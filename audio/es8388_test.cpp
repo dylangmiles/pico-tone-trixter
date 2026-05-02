@@ -16,12 +16,12 @@
  *   buf[j*2 + 0] = left  (guitar, LIN2)
  *   buf[j*2 + 1] = right (unused)
  *
- * Wiring:
+ * Wiring (proto-board layout, post 2026-05-XX pin swap):
  *   ES8388 DVDD  → 3.3V           ES8388 MCLK  → GPIO 21 (100Ω series)
- *   ES8388 AVDD  → 3.3V           ES8388 SCLK  → GPIO 27
- *   ES8388 GND   → GND            ES8388 LRCLK → GPIO 28
- *   ES8388 SDA   → GPIO 6         ES8388 DIN   → GPIO 26
- *   ES8388 SCL   → GPIO 7         ES8388 DOUT  → GPIO 5
+ *   ES8388 AVDD  → 3.3V           ES8388 SCLK  → GPIO 16
+ *   ES8388 GND   → GND            ES8388 LRCLK → GPIO 17
+ *   ES8388 SDA   → GPIO 14 (I²C1) ES8388 DIN   → GPIO 13
+ *   ES8388 SCL   → GPIO 15 (I²C1) ES8388 DOUT  → GPIO 12
  */
 
 #include "pico/stdlib.h"
@@ -41,11 +41,11 @@
 #include <cmath>
 
 #define MCLK_PIN        21
-#define ES8388_DOUT_PIN 15   /* Was GP5; moved to GP15 for proto-board layout (top of LEFT). */
+#define ES8388_DOUT_PIN 12   /* GP12 — I²S RX from ES8388 ADC. Adjacent to DIN (GP13) for tidy bundle. */
 
 // Cascade-debug scope trigger: goes HIGH the instant sync-loss is detected so
 // the scope can single-trigger with pre-trigger buffer showing pre-cascade state.
-#define CASCADE_TRIG_PIN 22  /* Was GP15; relocated since GP15 is now ES8388 DOUT. */
+#define CASCADE_TRIG_PIN 22  /* GP22 — debug-only, separate from audio pin block. */
 
 // 1 kHz PWM test tone on GPIO 2. Set to 0 when feeding real signal (e.g. piezo
 // via TL072) into LIN2 — leaving PWM running can couple into LIN2 through the

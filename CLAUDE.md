@@ -127,10 +127,10 @@ Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOU
 |------|----------|---|
 | 0 | UART0 TX (stdio @ 115200) | LEFT |
 | 1 | UART0 RX | LEFT |
-| 12 | ES8388 SDA | LEFT |
-| 13 | ES8388 SCL | LEFT |
-| 14 | I2S DATA / DIN (DAC out → ES8388 DIN) | LEFT |
-| 15 | ES8388 DOUT (ADC I2S input → Pico) | LEFT |
+| 12 | ES8388 DOUT (ADC I2S input → Pico) | LEFT |
+| 13 | I2S DATA / DIN (DAC out → ES8388 DIN) | LEFT |
+| 14 | ES8388 SDA (I²C1 SDA — silicon-fixed even pin) | LEFT |
+| 15 | ES8388 SCL (I²C1 SCL — silicon-fixed odd pin) | LEFT |
 | 16 | I2S BCLK / ES8388 SCLK | RIGHT |
 | 17 | I2S LRCLK / ES8388 LRCLK (= BCLK + 1, PIO sideset) | RIGHT |
 | 21 | ES8388 MCLK (12.288 MHz, hardware CLK_GPOUT0, 100Ω series) | RIGHT |

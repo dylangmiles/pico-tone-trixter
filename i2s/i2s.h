@@ -6,10 +6,11 @@ extern "C" {
 #include <stdint.h>
 
 /* GPIO assignments — chosen for proto-board layout: clocks on Pico RIGHT side
- * (BCLK 16, LRCLK 17, MCLK 21), data on LEFT side (DIN 14, DOUT 15) so audio
- * data lines run separated from clocks. PIO sideset constraint: LRCLK = BCLK + 1.
- * See docs/proto_board_layout_2026-05-01.md (in private repo) for routing rationale. */
-#define I2S_DATA_PIN    14   /* DIN: Pico → ES8388 (LEFT side) */
+ * (BCLK 16, LRCLK 17, MCLK 21), data on LEFT side (DOUT 12, DIN 13, SDA 14, SCL 15)
+ * so audio data lines run separated from clocks. PIO sideset constraint: LRCLK = BCLK + 1.
+ * I²S/I²C pin order chosen so top-side jumpers between ES8388 and Pico col 12 nest
+ * cleanly (I²S outer, I²C inner) — see docs/proto_board_layout_2026-05-01.md (private). */
+#define I2S_DATA_PIN    13   /* DIN: Pico → ES8388 (LEFT side) */
 #define I2S_BCLK_PIN    16   /* BCLK; LRCLK = I2S_BCLK_PIN + 1 = 17 (RIGHT side) */
 
 #define I2S_SAMPLE_RATE 96000

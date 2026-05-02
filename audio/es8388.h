@@ -2,8 +2,8 @@
 #include "hardware/i2c.h"
 
 #define ES8388_ADDR    0x10
-#define ES8388_SDA_PIN 12   /* I²C SDA — LEFT side of Pico, near data lines */
-#define ES8388_SCL_PIN 13   /* I²C SCL */
+#define ES8388_SDA_PIN 14   /* I²C1 SDA — LEFT side of Pico (GP14 = I²C1 SDA in silicon) */
+#define ES8388_SCL_PIN 15   /* I²C1 SCL — LEFT side of Pico (GP15 = I²C1 SCL in silicon) */
 
 bool es8388_read(i2c_inst_t *i2c, uint8_t reg, uint8_t *val);
 bool es8388_write_reg(i2c_inst_t *i2c, uint8_t reg, uint8_t val);
