@@ -63,7 +63,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     bool ok = true;
     // CONTROL1=0x12: Play+Record mode (enables ADC digital output path).
     // Without this the chip defaults to DAC-only mode and ADC DOUT stays digital zero.
-    ok &= es8388_write(i2c, 0x00, 0x12);  // CONTROL1: bit 7 set (stabilises ADC state machine) + Play+Record mode — external bias on LIN2/RIN2 should keep DAC VREF clean
+    ok &= es8388_write(i2c, 0x00, 0x12);  // CONTROL1: Play+Record mode (validated working baseline; comment about bit 7 is misleading — the value 0x12 is what the chip wants here on this part).
     printf("ES8388 config: DAC\n");
     ok &= es8388_write(i2c, 0x19, 0x04);  // DACCONTROL3: mute
     ok &= es8388_write(i2c, 0x01, 0x50);  // CONTROL2: refs on

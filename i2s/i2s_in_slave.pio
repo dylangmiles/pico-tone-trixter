@@ -1,7 +1,7 @@
 ;
 ; i2s_in_slave.pio — I2S slave input driver for ES8388
 ;
-; Pico 2 is I2S master: SCLK (GPIO 27) and LRCLK (GPIO 28) are driven by
+; Pico 2 is I2S master: BCLK (GPIO 16) and LRCLK (GPIO 17) are driven by
 ; i2s_out.pio on PIO0.  This SM (PIO1) reads DOUT from the ES8388 by
 ; watching those same GPIO lines with absolute wait-gpio instructions —
 ; no side-set needed and no GPIO ownership conflict.
@@ -17,9 +17,9 @@
 ; LRCLK transition itself, which this wait-based approach can't guarantee.
 ;
 ; Pin assignments (set in es8388_test.cpp):
-;   IN pin 0 = ES8388 DOUT (GPIO 4)
-;   SCLK     = GPIO 27  (absolute — driven by PIO0, read-only here)
-;   LRCLK    = GPIO 28  (absolute — driven by PIO0, read-only here)
+;   IN pin 0 = ES8388 DOUT (GPIO 12, set in es8388_test.cpp)
+;   BCLK     = GPIO 16  (absolute — driven by PIO0, read-only here)
+;   LRCLK    = GPIO 17  (absolute — driven by PIO0, read-only here)
 ;
 ; Run at full sys_clk (clkdiv = 1.0).  The wait-gpio instructions stall
 ; until each edge arrives, so no timing arithmetic is required.
@@ -36,26 +36,26 @@
 .program i2s_in_slave
 
 public entry_point:
-    wait 1 gpio 28          ; startup sync: park on LRCLK high so the next
+    wait 1 gpio 17          ; startup sync: park on LRCLK high so the next
                             ; wait 0 catches a true falling edge (not a
                             ; mid-frame low). Runs once; .wrap skips it.
 .wrap_target
 
 ; ---- Left channel (LRCLK = 0) ----------------------------------------
-    wait 0 gpio 28          ; wait for LRCLK low  (left frame starts)
+    wait 0 gpio 17          ; wait for LRCLK low  (left frame starts)
     set x, 31               ; 32 bits to receive
 left_bit:
-    wait 0 gpio 27          ; wait SCLK low  (data driven by ES8388)
-    wait 1 gpio 27          ; wait SCLK high (data stable — sample it)
+    wait 0 gpio 16          ; wait SCLK low  (data driven by ES8388)
+    wait 1 gpio 16          ; wait SCLK high (data stable — sample it)
     in pins, 1              ; shift DOUT into ISR
     jmp x-- left_bit        ; loop until x wraps through 0 (32 iterations)
 
 ; ---- Right channel (LRCLK = 1) ----------------------------------------
-    wait 1 gpio 28          ; wait for LRCLK high (right frame starts)
+    wait 1 gpio 17          ; wait for LRCLK high (right frame starts)
     set x, 31
 right_bit:
-    wait 0 gpio 27
-    wait 1 gpio 27
+    wait 0 gpio 16
+    wait 1 gpio 16
     in pins, 1
     jmp x-- right_bit
 
