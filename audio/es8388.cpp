@@ -7,7 +7,7 @@
  *   3. es8388_adcpower_resync()— ADCPOWER 0xFF→0x00 sync trigger, call with SCLK running
  *
  * es8388_powerup() combines steps 2+3 and requires SCLK running throughout.
- * The caller (es8388_test.cpp) drives GPIO 27/28 LOW via SIO during quiesced phases
+ * The caller (es8388_test.cpp) drives GPIO 16/17 LOW via SIO during quiesced phases
  * so there is zero interference on SDA/SCL.
  */
 

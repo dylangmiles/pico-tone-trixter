@@ -3,11 +3,11 @@
  *
  * Guitar → TL072 → ES8388 LIN2 → PIO1 (i2s_in_slave) → copy → PIO0 (i2s_out) → ES8388 DAC → jack.
  *
- * ES8388 is I2S slave; Pico drives MCLK (GPIO 21), SCLK (GPIO 27), LRCLK (GPIO 28).
- * PIO1 reads DOUT (GPIO 5) by watching SCLK/LRCLK with wait-gpio — no PIO clock config needed.
+ * ES8388 is I2S slave; Pico drives MCLK (GPIO 21), SCLK (GPIO 16), LRCLK (GPIO 17).
+ * PIO1 reads DOUT (GPIO 12) by watching SCLK/LRCLK with wait-gpio — no PIO clock config needed.
  *
  * Init is two-phase to eliminate I2C/SCLK crosstalk:
- *   Phase 1 (SCLK quiesced): GPIO 27/28 driven LOW via SIO, config registers written with zero
+ *   Phase 1 (SCLK quiesced): GPIO 16/17 driven LOW via SIO, config registers written with zero
  *                             interference on SDA/SCL.
  *   Phase 2 (SCLK running):  PIO0 resumed, es8388_adcpower_resync() triggers I2S sync via the
  *                             ADCPOWER 0xFF→0x00 transition while SCLK is live.
@@ -100,7 +100,7 @@ static uint32_t g_tone_blocks = 0;
 // ---------------------------------------------------------------------------
 // SCLK quiesce / resume
 //
-// quiesce: stop PIO0 SM0 and drive GPIO 27 (SCLK) and GPIO 28 (LRCLK) LOW
+// quiesce: stop PIO0 SM0 and drive GPIO 16 (SCLK) and GPIO 17 (LRCLK) LOW
 //          via SIO so there is zero signal on those pins during I2C operations.
 // resume:  hand the pins back to PIO0 and re-enable SM0.
 // ---------------------------------------------------------------------------
@@ -448,7 +448,7 @@ int main() {
            ES8388_DOUT_PIN, pu, pd, dout_state);
     fflush(stdout);
 
-    // ---- Input PIO (PIO1 SM0) — i2s_in_slave watches GPIO 27/28 directly ---
+    // ---- Input PIO (PIO1 SM0) — i2s_in_slave watches GPIO 16/17 directly ---
     s_in_pio = pio1;
     s_in_sm  = 0;
     static uint s_in_pio_offset;

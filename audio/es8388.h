@@ -8,7 +8,7 @@
 bool es8388_read(i2c_inst_t *i2c, uint8_t reg, uint8_t *val);
 bool es8388_write_reg(i2c_inst_t *i2c, uint8_t reg, uint8_t val);
 
-// Phase 1: write all config registers. Call with SCLK quiesced (GPIO 27/28 driven LOW).
+// Phase 1: write all config registers. Call with SCLK quiesced (GPIO 16/17 driven LOW).
 bool es8388_config_only(i2c_inst_t *i2c);
 
 // Phase 2a: CHIPPOWER 0xFF→0x00 full digital+analog reset + 50ms VMID wait.
