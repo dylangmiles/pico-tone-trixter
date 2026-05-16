@@ -87,13 +87,21 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     printf("ES8388 config: ADC\n");
     ok &= es8388_write(i2c, 0x03, 0xFF);  // ADCPOWER: off while configuring
     // ADCCONTROL1 (reg 0x09): bits[7:4]=MicAmpL, bits[3:0]=MicAmpR.
-    // Each nibble: 0=0dB, 1=+3, 2=+6, 3=+9, ... 8=+24dB. 0x00 = 0 dB L+R:
-    // ADC FS = ~1.0 Vrms — maximum headroom for chip-only validation with
-    // GPIO2 PWM test tone (~300 mV pp / ~150 mV peak square at LIN2). Output
-    // will be −9 dB vs LIN2 (chip's natural ADC-FS to DAC-FS unity offset);
-    // we accept that for this test since we're proving shape matching, not
-    // unity gain. Bring back to 0x22 (+6 dB) when re-introducing analog input.
-    ok &= es8388_write(i2c, 0x09, 0x22);
+    // Each nibble: 0=0dB, 1=+3, 2=+6, 3=+9, ... 8=+24dB.
+    // 2026-05-10 (third iteration): 0x77 (+21 dB) was too hot in combination
+    // with digital ×4 in input_dma_irq1_handler — total +33 dB chain pushed
+    // open-board pickup noise (12 mV at TSin idle) close to digital FS,
+    // triggering codec noise-shaping artefacts at ~19 kHz (118 mV LOUT noise
+    // floor at rest, audible as loud HF squeal + harsh clipping during strum).
+    // Pulled back to **0x66 (+18 dB) + digital ×2** = +24 dB total chain gain,
+    // a middle ground between the first iteration (+18 dB only, signal lost
+    // in noise) and the over-driven second (+33 dB, unusable). Expected:
+    // strum ~60 mV at LOUT vs ~25 mV noise = ~+8 dB SNR. Audibly cleaner than
+    // first iteration; usable while open-board.
+    // Real fix for SNR: enclosure + chassis ground reduces TSin noise floor
+    // (currently ~10 mV) by ~10–15 dB, lifting the SNR ceiling above which
+    // more chain gain can't help.
+    ok &= es8388_write(i2c, 0x09, 0x66);
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo

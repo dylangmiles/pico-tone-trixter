@@ -188,8 +188,28 @@ static void input_dma_irq1_handler(void) {
             // shift-left puts the original sign bit back into bit 31. Without
             // this shift, negative samples read as huge positive values
             // (rectification → 1.66 V pk-pk sawtooth at idle, 2026-04-27).
-            int32_t l = src[j * 2]     << 1;  // left  (LRCLK=0 = even slots)
-            int32_t r = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
+            int32_t l_raw = src[j * 2]     << 1;  // left  (LRCLK=0 = even slots)
+            int32_t r_raw = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
+
+            // Digital gain currently ×1 (no boost). After the 2026-05-10
+            // hardware rewire of TSout from ES8388 LOUT2 (line-level) to
+            // LOUT1 (40 mW HP amp output, datasheet feature #1, page 1),
+            // the HP amp provides the ~6-10 dB extra drive that previously
+            // had to come from digital gain on the LOUT2 path. Iterations:
+            //   iter 1 (LOUT2, ×1, +18 dB analog) → ~26 mV strum, lost in
+            //          16 mV noise (+4 dB SNR)
+            //   iter 2 (LOUT2, ×4, +21 dB analog) → over-driven; codec
+            //          noise-shaping artefacts at ~19 kHz, unusable
+            //   iter 3 (LOUT2, ×2, +18 dB analog) → ~50 mV strum, +24 dB
+            //          chain, but only +6 dB SNR because the LOUT2 line-out
+            //          is structurally low-amplitude
+            //   iter 4 (LOUT1, ×1, +18 dB analog) → HP amp side instead
+            // To bump digital gain back: change `l_raw` below to a
+            // saturating int64 multiply (see git history of this file for
+            // the previous ×2 / ×4 forms with hard-clip at INT32 limits).
+            int32_t l = l_raw;
+            int32_t r = r_raw;
+
             s_staging_buf[j * 2]     = l;
             s_staging_buf[j * 2 + 1] = l;
             int32_t al = l < 0 ? -l : l;
