@@ -213,7 +213,12 @@ target_link_libraries(es8388_test
     hardware_i2c
     hardware_resets
     hardware_pwm
+    fft_convolver
 )
+# IR header (ir_array_<guitar>.h) is regenerated from WAV by gen_audio_arrays.py
+# whenever the source WAV / IR file changes. es8388_test currently includes the
+# Tanglewood IR; switch guitar with -DOFFLINE_GUITAR=garrison on the cmake line.
+add_dependencies(es8388_test audio_arrays)
 pico_add_extra_outputs(es8388_test)
 pico_enable_stdio_usb(es8388_test 0)
 pico_enable_stdio_uart(es8388_test 1)

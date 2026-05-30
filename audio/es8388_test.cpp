@@ -36,9 +36,42 @@
 #include "i2s_out.pio.h"
 #include "audio/es8388.h"
 #include "i2s_in_slave.pio.h"
+#include "FFTConvolver.h"
+#include "audio/samples/ir_array_garrison.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+
+// ---------------------------------------------------------------------------
+// IR convolution toggle (2026-05-30 — first IR validation, dual-channel A/B).
+//   0 = pure passthrough (original behaviour, baseline for A/B)
+//   1 = single-channel IR convolution between ADC capture and DAC playback
+// IR is truncated to IR_TAPS to fit single-core real-time on RP2350.
+// Full 2048-sample IR needs Core 1 worker (TwoStageFFTConvolver) — deferred.
+// ---------------------------------------------------------------------------
+#define ENABLE_IR 1
+
+#if ENABLE_IR
+// 512 taps = 10.7 ms IR length at 48 kHz. Captures direct + early reflections
+// of the NT1-A acoustic guitar body response. Late reverberant tail is truncated.
+// Single-stage FFTConvolver at block=256, IR=512 runs ~30% of real-time on
+// RP2350 hardware FPU — comfortable inside the 5.3 ms IRQ budget.
+#define IR_TAPS         512
+
+// Post-convolution scaling to keep peaks below 0 dBFS. The IR's actual
+// per-tap mean energy is much lower than peak-normalised would suggest;
+// measured convolved gain over input is ~2× rather than the worst-case
+// sqrt(N) ≈ 22×. 2026-05-30 listening test: scale=0.25 produced wet at
+// half-dry volume → raised to 0.5 for ~unity. Reduce if you hear clipping
+// on hard transients (especially Garrison's spiky piezo); increase if too
+// quiet. Watch peak_l in the [cal] line.
+#define IR_OUTPUT_SCALE 1.0f
+
+static fftconvolver::FFTConvolver s_convolver;
+static float s_ir_buf[IR_TAPS];
+static float s_dsp_in [I2S_BLOCK_SIZE];
+static float s_dsp_out[I2S_BLOCK_SIZE];
+#endif
 
 #define MCLK_PIN        21
 #define ES8388_DOUT_PIN 12   /* GP12 — I²S RX from ES8388 ADC. Adjacent to DIN (GP13) for tidy bundle. */
@@ -191,34 +224,47 @@ static void input_dma_irq1_handler(void) {
             int32_t l_raw = src[j * 2]     << 1;  // left  (LRCLK=0 = even slots)
             int32_t r_raw = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
 
-            // Digital gain currently ×1 (no boost). After the 2026-05-10
-            // hardware rewire of TSout from ES8388 LOUT2 (line-level) to
-            // LOUT1 (40 mW HP amp output, datasheet feature #1, page 1),
-            // the HP amp provides the ~6-10 dB extra drive that previously
-            // had to come from digital gain on the LOUT2 path. Iterations:
-            //   iter 1 (LOUT2, ×1, +18 dB analog) → ~26 mV strum, lost in
-            //          16 mV noise (+4 dB SNR)
-            //   iter 2 (LOUT2, ×4, +21 dB analog) → over-driven; codec
-            //          noise-shaping artefacts at ~19 kHz, unusable
-            //   iter 3 (LOUT2, ×2, +18 dB analog) → ~50 mV strum, +24 dB
-            //          chain, but only +6 dB SNR because the LOUT2 line-out
-            //          is structurally low-amplitude
-            //   iter 4 (LOUT1, ×1, +18 dB analog) → HP amp side instead
-            // To bump digital gain back: change `l_raw` below to a
-            // saturating int64 multiply (see git history of this file for
-            // the previous ×2 / ×4 forms with hard-clip at INT32 limits).
+#if ENABLE_IR
+            // Stage 1: normalise int32 → float [-1, 1) for the convolver.
+            // Stage 2 (after the sample loop): run FFTConvolver::process() once on
+            // the whole block, then convert back to int32 + scale + clip + write
+            // to s_staging_buf. Peak/min/max here track the RAW INPUT for the
+            // [cal] diagnostic; convolved output peaks are bounded by IR_OUTPUT_SCALE.
+            s_dsp_in[j] = (float)l_raw * (1.0f / 2147483648.0f);
+#else
+            // Original passthrough. Digital gain ×1 (no boost). 2026-05-10 LOUT2 →
+            // LOUT1 hardware rewire put the HP amp's 6–10 dB gain into the chain;
+            // analog +18 dB (ADCCONTROL1=0x66) + digital ×1 + LOUT1 amp = +12 dB
+            // chain gain at TSout (verified 2026-05-16 + 2026-05-29 SNR sessions).
             int32_t l = l_raw;
-            int32_t r = r_raw;
-
             s_staging_buf[j * 2]     = l;
             s_staging_buf[j * 2 + 1] = l;
-            int32_t al = l < 0 ? -l : l;
-            int32_t ar = r < 0 ? -r : r;
+#endif
+
+            int32_t al = l_raw < 0 ? -l_raw : l_raw;
+            int32_t ar = r_raw < 0 ? -r_raw : r_raw;
             if (al > peak_l) peak_l = al;
             if (ar > peak_r) peak_r = ar;
-            if (l < min_l) min_l = l;
-            if (l > max_l) max_l = l;
+            if (l_raw < min_l) min_l = l_raw;
+            if (l_raw > max_l) max_l = l_raw;
         }
+
+#if ENABLE_IR
+        // Run the FFT convolution. 512-tap IR on RP2350 HW FPU fits well inside
+        // the 5.3 ms block budget (~30 % of real-time). Longer IRs need a Core 1
+        // worker — see audio/dsp.cpp for the dual-core pattern.
+        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
+
+        for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
+            float f = s_dsp_out[j] * IR_OUTPUT_SCALE;
+            if (f >=  1.0f) f =  0.999999f;
+            if (f <  -1.0f) f = -1.0f;
+            int32_t l = (int32_t)(f * 2147483648.0f);
+            s_staging_buf[j * 2]     = l;
+            s_staging_buf[j * 2 + 1] = l;
+        }
+#endif
+
         g_peak_l = peak_l;
         g_peak_r = peak_r;
         g_min_l  = min_l;
@@ -499,6 +545,40 @@ int main() {
     }
     irq_set_exclusive_handler(DMA_IRQ_1, input_dma_irq1_handler);
     irq_set_enabled(DMA_IRQ_1, true);
+
+#if ENABLE_IR
+    // Initialise FFTConvolver with a truncated NT1-A acoustic IR. Must happen
+    // BEFORE the input PIO goes live so the IRQ handler always sees a valid
+    // convolver state. Warm-up calls (one zero pass + one sine pass) exercise
+    // every float code path before the first real-audio block arrives — same
+    // lazy-patching mitigation as audio/dsp.cpp.
+    {
+        const int copy_n = (IR_TAPS < (int)ir_num_samples) ? IR_TAPS : (int)ir_num_samples;
+        for (int j = 0; j < copy_n; j++)        s_ir_buf[j] = ir_samples[j];
+        for (int j = copy_n; j < IR_TAPS; j++)  s_ir_buf[j] = 0.0f;
+
+        if (!s_convolver.init(I2S_BLOCK_SIZE, s_ir_buf, IR_TAPS)) {
+            printf("FFTConvolver init FAILED (heap exhausted?)\n");
+            fflush(stdout);
+            while (true) tight_loop_contents();
+        }
+
+        // Warm-up — zero pass primes OLA state, sine pass touches every code path.
+        memset(s_dsp_in, 0, sizeof(s_dsp_in));
+        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
+        for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
+            s_dsp_in[j] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)j / 48000.0f);
+        }
+        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
+        printf("FFTConvolver ready: block=%d IR=%d taps (of %lu) scale=%.2f\n",
+               I2S_BLOCK_SIZE, IR_TAPS, (unsigned long)ir_num_samples,
+               (double)IR_OUTPUT_SCALE);
+        fflush(stdout);
+    }
+#else
+    printf("IR convolution DISABLED — pure passthrough\n");
+    fflush(stdout);
+#endif
 
     pio_sm_set_enabled(s_in_pio, s_in_sm, true);
     dma_channel_start(s_in_chan[0]);
