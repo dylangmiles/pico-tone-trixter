@@ -1,4 +1,7 @@
-# IR Capture Guide — Tone Trixter
+---
+layout: page
+title: "IR Capture Guide"
+---
 
 How to capture an acoustic body impulse response (IR) that transforms a piezo pickup signal into a microphone-quality recording.
 

@@ -1,6 +1,9 @@
-# Can a $7 Chip Sound Like a $300 Microphone?
-
-April 2026 · Episode 1
+---
+title: "Can a $7 Chip Sound Like a $300 Microphone?"
+episode: 1
+date: 2026-04-03
+permalink: /episodes/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/
+---
 
 Piezo pickups are everywhere in acoustic guitars. They're cheap, reliable, and fit neatly under the saddle. They're also, frankly, not great.
 
@@ -9,8 +12,8 @@ Compare a piezo pickup directly to a studio microphone on the same guitar and th
 **Listen for yourself:**
 
 <audio controls>
-  <source src="assets/garrison-piezo-20260320.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/garrison-piezo-20260320.wav">Raw piezo — Garrison acoustic, undersaddle pickup (20s)</a>
+  <source src="assets/garrison-piezo-20260320.mp3" type="audio/mpeg">
+  <a href="assets/garrison-piezo-20260320.mp3">Raw piezo — Garrison acoustic, undersaddle pickup (20s)</a>
 </audio>
 
 That's what most acoustic-electric guitars sound like through a PA or into a recording interface.
@@ -82,8 +85,8 @@ To validate before wiring up real-time hardware, I ran an offline test: embedded
 **The result:**
 
 <audio controls>
-  <source src="assets/output_garrison-20260403.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/assets/output_garrison-20260403.wav">Processed output — same recording, IR applied on Pico 2 (20s)</a>
+  <source src="assets/output_garrison-20260403.mp3" type="audio/mpeg">
+  <a href="assets/output_garrison-20260403.mp3">Processed output — same recording, IR applied on Pico 2 (20s)</a>
 </audio>
 
 The validation plot below shows the frequency response before and after — the IR is clearly reshaping the signal, and the Pico's output matches a Python reference convolution within 2% RMS error:
@@ -100,7 +103,7 @@ The IR for this project was captured using a **Universal Audio Gigcaster 8** aud
 
 The IR was then generated using the [Cuki IR Generator](https://github.com/kienphanhuy/Cuki-IR-generator-Python), a Python/Colab tool that performs the deconvolution, and validated in the DAW using Nembrini's IR Loader plugin before moving to the bench.
 
-Full capture methodology: [docs/ir_capture_guide.md](../../ir_capture_guide.md)
+Full capture methodology: [the IR capture guide]({{ site.baseurl }}{% link ir_capture_guide.md %})
 
 ---
 
@@ -109,9 +112,3 @@ Full capture methodology: [docs/ir_capture_guide.md](../../ir_capture_guide.md)
 The algorithm is proven. The hardware is fast enough. The next step is wiring up the live signal chain — ADC, preamp, DAC, and the Pico 2 — to get audio flowing in real-time.
 
 Components are on their way. Next article: first live audio through the prototype.
-
----
-
-**GitHub:** [pico-tone-trixter](https://github.com/dylangmiles/pico-tone-trixter)
-
-*Built in Cape Town, South Africa.*

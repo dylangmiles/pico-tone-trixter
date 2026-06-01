@@ -1,0 +1,10 @@
+# Jekyll build output and caches
+_site/
+.jekyll-cache/
+.jekyll-metadata
+.sass-cache/
+
+# Local bundler install (GitHub Pages builds with its own gem set)
+vendor/
+.bundle/
+Gemfile.lock

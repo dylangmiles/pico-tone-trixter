@@ -1,0 +1,40 @@
+title: Pico Tone Trixter
+description: >-
+  Turning a $7 codec chip into a $300 studio microphone — a real-time
+  guitar-pedal build log. Built in Cape Town, South Africa.
+author: Dylan Miles
+
+# Project site lives at https://dylangmiles.github.io/pico-tone-trixter/
+url: "https://dylangmiles.github.io"
+baseurl: "/pico-tone-trixter"
+
+theme: minima
+# Dark palette is applied via assets/main.scss (minima 2.5 has no built-in skins).
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+# Posts are a folder-per-episode collection (each with co-located assets),
+# rather than the flat _posts convention.
+collections:
+  episodes:
+    output: true
+
+defaults:
+  - scope:
+      path: ""
+      type: episodes
+    values:
+      layout: episode
+
+# Keep the firmware repo's own files and per-episode social copy out of the build.
+# Audio (LFS-tracked wav) IS copied into _site: the GitHub Actions build checks out
+# LFS (lfs: true), so the real binaries get baked in and are served as ordinary
+# Pages CDN assets via relative links — LFS bandwidth is only touched at build time.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - "_episodes/**/social.md"
+  - README.md

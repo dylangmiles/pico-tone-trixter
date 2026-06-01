@@ -1,21 +1,23 @@
-# IR Killed the Quack
-
-### And it sounds like a microphone
-
-May 2026 · Episode 2
+---
+title: "IR Killed the Quack"
+subtitle: "And it sounds like a microphone"
+episode: 2
+date: 2026-05-31
+permalink: /episodes/2026-05-ir-killed-the-quack/
+---
 
 Episode 1 ended with the algorithm working — offline, on embedded audio, the Pico 2 spitting out a microphone-like file over UART. The closing line promised *first live audio through the prototype*. This is that episode.
 
 **Before / after, real guitar through the real pedal:**
 
 <audio controls>
-  <source src="assets/garrison-passthrough_cc.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-05-and-it-sounds-like-a-microphone/assets/garrison-passthrough_cc.wav">Garrison piezo, transparent passthrough through the pedal — no IR (59s)</a>
+  <source src="assets/garrison-passthrough_cc.mp3" type="audio/mpeg">
+  <a href="assets/garrison-passthrough_cc.mp3">Garrison piezo, transparent passthrough through the pedal — no IR (59s)</a>
 </audio>
 
 <audio controls>
-  <source src="assets/garrison-ir_cc.wav" type="audio/wav">
-  <a href="https://media.githubusercontent.com/media/dylangmiles/pico-tone-trixter/main/docs/posts/2026-05-and-it-sounds-like-a-microphone/assets/garrison-ir_cc.wav">Same guitar, same pedal, same passage — 512-tap NT1-A IR applied (59s)</a>
+  <source src="assets/garrison-ir_cc.mp3" type="audio/mpeg">
+  <a href="assets/garrison-ir_cc.mp3">Same guitar, same pedal, same passage — 512-tap NT1-A IR applied (59s)</a>
 </audio>
 
 The nasal quack — the thing piezo pickups get blamed for and the entire reason this project exists — is gone. The signal sounds like a recorded acoustic guitar instead of an under-saddle pickup.
@@ -159,9 +161,3 @@ What's next, in rough order:
 - **A KiCad PCB** to retire the perfboard once the V1.1 software polish has settled.
 
 Plenty more to build. But the question that opened Episode 1 has its answer, and it sounds like a microphone.
-
----
-
-**GitHub:** [pico-tone-trixter](https://github.com/dylangmiles/pico-tone-trixter)
-
-*Built in Cape Town, South Africa.*

@@ -1,0 +1,54 @@
+---
+# Custom dark palette. This file shadows minima's own assets/main.scss.
+# minima declares its colour variables with `!default`, so setting them here
+# (before the import) overrides them. Rules after the import patch the few
+# spots where minima 2.5 hardcodes light colours (notably code blocks).
+---
+
+// --- Dark palette: override minima's !default variables -------------------
+$background-color: #161616;
+$text-color:       #e6e6e6;
+$brand-color:      #7cc4ff;
+
+$grey-color:       #9b9b9b;
+$grey-color-light: #333333;  // borders, <hr>, table lines, wrapper rules
+$grey-color-dark:  #cccccc;  // site title, footer text, captions
+
+@import "minima";
+
+// --- Patch minima's hardcoded light spots ---------------------------------
+pre,
+code {
+  background-color: #1f1f1f;
+  border-color: #333333;
+  color: #e6e6e6;
+}
+
+.highlight,
+.highlighter-rouge .highlight {
+  background: #1f1f1f;
+}
+
+// Table header/zebra striping read better with explicit dark fills.
+table {
+  color: $text-color;
+
+  th {
+    background-color: #262626;
+    border-color: #3a3a3a;
+  }
+
+  td {
+    border-color: #3a3a3a;
+  }
+
+  tr:nth-child(even) {
+    background-color: #1d1d1d;
+  }
+}
+
+// Audio players sit on the dark background more cleanly when full-width.
+audio {
+  width: 100%;
+  margin: 0.5em 0;
+}

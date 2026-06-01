@@ -1,4 +1,7 @@
-# Wiring — Tone Trixter
+---
+layout: page
+title: "Wiring"
+---
 
 Hardware connections between the Raspberry Pi Pico 2 (RP2350) and the ES8388 audio codec module, plus the external bias and attenuation circuitry needed for guitar input.
 
