@@ -1,6 +1,10 @@
 ---
 layout: page
 title: Pico Tone Trixter
+image:
+  path: /assets/og/og-home.jpg
+  width: 1200
+  height: 630
 ---
 
 **Can a $7 codec chip make a piezo-equipped acoustic guitar sound like it was recorded with a $300 studio microphone?**

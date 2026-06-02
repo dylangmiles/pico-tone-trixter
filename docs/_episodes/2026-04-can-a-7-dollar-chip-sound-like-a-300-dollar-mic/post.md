@@ -3,6 +3,10 @@ title: "Can a $7 Chip Sound Like a $300 Microphone?"
 episode: 1
 date: 2026-04-03
 permalink: /episodes/2026-04-can-a-7-dollar-chip-sound-like-a-300-dollar-mic/
+image:
+  path: /assets/og/og-episode-1.jpg
+  width: 1200
+  height: 630
 ---
 
 Piezo pickups are everywhere in acoustic guitars. They're cheap, reliable, and fit neatly under the saddle. They're also, frankly, not great.

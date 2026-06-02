@@ -4,6 +4,10 @@ subtitle: "And it sounds like a microphone"
 episode: 2
 date: 2026-05-31
 permalink: /episodes/2026-05-ir-killed-the-quack/
+image:
+  path: /assets/og/og-episode-2.jpg
+  width: 1200
+  height: 630
 ---
 
 Episode 1 ended with the algorithm working — offline, on embedded audio, the Pico 2 spitting out a microphone-like file over UART. The closing line promised *first live audio through the prototype*. This is that episode.
