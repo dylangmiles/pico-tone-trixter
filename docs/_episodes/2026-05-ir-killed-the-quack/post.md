@@ -28,11 +28,11 @@ That's the headline. The rest of this post is how a six-week build got from *Epi
 
 ## The Pedal
 
-![The V1 pedal on the bench, in its "dankie / THANK YOU / Enkosi kakhulu" wooden enclosure. Old Samsung monitor showing the input waveform in Audacity, laptop on the right for serial UART and analysis, multimeter on the left, scope probes draped across.](assets/v1-pedal-bench-hero.jpg)
+![The V1 Tone Trixter on the bench in its "dankie / THANK YOU / Enkosi kakhulu" wooden gift-box enclosure, mid-test: a monitor showing the live input waveform, a laptop running spectrum analysis, a Universal Audio Gigcaster interface and headphones on the left, and the Tanglewood acoustic guitar leaning against the bench on the right.](assets/bench-guitar-hero.jpg)
 
 That's the V1 build. The enclosure is a repurposed multilingual gift box — "dankie / THANK YOU / Enkosi kakhulu" — copper-tape-lined on the inside for shielding, with TRS panel jacks on opposite walls and a 9V battery snap inside. The brain is a Raspberry Pi Pico 2 + a PCB Artists ES8388 codec module + a small JFET daughter board buffering the piezo's high-impedance signal.
 
-![Inside the enclosure — Pico 2 + ES8388 module + JFET daughter board on a vertical perfboard, copper-tape-lined walls, TRS jacks on either side.](assets/v1-pedal-interior.jpg)
+![Inside the enclosure — a Raspberry Pi Pico 2, PCB Artists ES8388 codec module and JFET daughter board mounted vertically on perfboard, copper-tape-lined walls, a red-glowing UBEC regulator, and TRS panel jacks on opposite walls.](assets/pedal-interior-daughter.jpg)
 
 The signal chain:
 
@@ -78,11 +78,13 @@ Then a 10-second DMM check on the wrong-looking node caught it: pin 1 of the dau
 
 Why was pin 1 at 0 V? The bias-divider's lower resistor — supposed to be 100 kΩ — was 100 Ω. A wrong-by-1000× resistor.
 
-The cause: brown-black-brown vs brown-black-yellow. A single-band misread. The chip's only crime was being mounted next to a wrongly-labeled colour stripe.
+Not a colour-band misread, though — I'm colour blind, so I don't trust the bands at all. I meter every resistor as I place it, and I metered this one. The slip was subtler: I read the digits and missed the *exponent*. 100 Ω and 100 kΩ both register as "1-0-0" if you're not watching the multiplier, and that's the trap I walked straight into.
+
+What normally saves me is procedure. A bias divider is a *pair*, and I usually fit and measure both resistors together — so a 1000× mismatch between them is glaring the moment they sit side by side. This time the build order split them: I fitted one resistor, did other work, and fitted the second much later. The two were never compared, so the magnitude slip had nothing to contradict it.
 
 Two engineering takeaways went into the build procedure permanently:
 
-1. **DMM the resistors before powering up any new analog stage.** Ten seconds across each leg catches the 1000× error before two hours of false-trail diagnosis.
+1. **Fit and measure both halves of a bias divider in one sitting, and read the exponent — not just the digits.** Metering each resistor individually doesn't help when the failure mode is a 1000× magnitude slip; it's the *comparison across the pair* that catches it.
 2. **When DC bias looks perfect but AC signal collapses, test the bias-node DC at every accessible point before suspecting silicon damage.** A short *after* the active device can perfectly mimic a dead active device.
 
 The pedal in the photo above is the rebuilt one, post-fix. (The original V1 pedal was destroyed by an unrelated incident — a scope probe shorted the 5 V rail to GND during debugging and killed the RP2350. That's its own engineering story for another post.)
