@@ -37,40 +37,87 @@
 #include "audio/es8388.h"
 #include "i2s_in_slave.pio.h"
 #include "FFTConvolver.h"
+#include "TwoStageFFTConvolver.h"
 #include "audio/samples/ir_array_garrison.h"
+#include "pico/multicore.h"
+#include "pico/sync.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
 
 // ---------------------------------------------------------------------------
-// IR convolution toggle (2026-05-30 — first IR validation, dual-channel A/B).
+// IR convolution toggle.
 //   0 = pure passthrough (original behaviour, baseline for A/B)
-//   1 = single-channel IR convolution between ADC capture and DAC playback
-// IR is truncated to IR_TAPS to fit single-core real-time on RP2350.
-// Full 2048-sample IR needs Core 1 worker (TwoStageFFTConvolver) — deferred.
+//   1 = FULL 2048-tap NT1-A IR convolution between ADC capture and DAC playback,
+//       split across both cores (2026-06-03 migration): head on Core 0 (low
+//       latency), tail on Core 1 (body resonance / reverb tail).
 // ---------------------------------------------------------------------------
+// Default build = full dual-core IR. The es8388_test_passthrough CMake target
+// overrides this with -DENABLE_IR=0 for the no-convolver / no-Core-1 A/B baseline.
+#ifndef ENABLE_IR
 #define ENABLE_IR 1
+#endif
 
 #if ENABLE_IR
-// 512 taps = 10.7 ms IR length at 48 kHz. Captures direct + early reflections
-// of the NT1-A acoustic guitar body response. Late reverberant tail is truncated.
-// Single-stage FFTConvolver at block=256, IR=512 runs ~30% of real-time on
-// RP2350 hardware FPU — comfortable inside the 5.3 ms IRQ budget.
-#define IR_TAPS         512
+// Full IR via TwoStageFFTConvolver:
+//   - head (64-sample blocks) runs synchronously on Core 0 → low-latency direct sound
+//   - tail (512-sample blocks) runs in the background on Core 1 → late reflections
+// Replaces the old single-core 512-tap truncation: now the WHOLE 2048-tap IR, with
+// latency still set by the 64-sample head (~1-2 ms of DSP), not a full extra block.
+// Matches the CLAUDE.md perf projection (Core 0 head ~0.6 ms, Core 1 tail ~1.5 ms).
+#define IR_HEAD_BLOCK   64
+#define IR_TAIL_BLOCK   512
 
-// Post-convolution scaling to keep peaks below 0 dBFS. The IR's actual
-// per-tap mean energy is much lower than peak-normalised would suggest;
-// measured convolved gain over input is ~2× rather than the worst-case
-// sqrt(N) ≈ 22×. 2026-05-30 listening test: scale=0.25 produced wet at
-// half-dry volume → raised to 0.5 for ~unity. Reduce if you hear clipping
-// on hard transients (especially Garrison's spiky piezo); increase if too
-// quiet. Watch peak_l in the [cal] line.
-#define IR_OUTPUT_SCALE 1.0f
+// Post-convolution scaling to keep peaks below 0 dBFS. The full 2048-tap IR has
+// L1 norm (sum|h|) ~19.7 vs ~13.8 for the first 512 taps — ~1.43x more worst-case
+// PEAK gain (RMS/L2 is almost unchanged: 1.29 vs 1.27). So the extra clipping is
+// on transients, and scale must come DOWN vs the 512-tap truncation. 0.70 matches
+// the old 512@1.0 peak behaviour (the validated, clean playing level); 0.5 was
+// audibly quiet so we're back at 0.70. Drop toward 0.5 if hard transients clip
+// (Garrison's spiky piezo). Watch peak_l in [cal]/live.
+#define IR_OUTPUT_SCALE 0.7f
 
-static fftconvolver::FFTConvolver s_convolver;
-static float s_ir_buf[IR_TAPS];
-static float s_dsp_in [I2S_BLOCK_SIZE];
+// --- Core 1 tail-convolution offload ---------------------------------------
+// TwoStageFFTConvolver wraps its tail FFT in startBackgroundProcessing() /
+// waitForBackgroundProcessing(). We override them to dispatch the tail work to
+// Core 1 via two semaphores, so the heavy tail convolution never steals Core 0's
+// real-time budget. The tail completes in ~2 ms but only fires every ~10.7 ms
+// (every 2nd block), so Core 0's wait effectively never blocks.
+static semaphore_t s_sem_tail_do;     // Core 0 → Core 1: a tail block is ready
+static semaphore_t s_sem_tail_done;   // Core 1 → Core 0: tail block done (pre-released once)
+
+class CoreOffloadConvolver : public fftconvolver::TwoStageFFTConvolver {
+public:
+    // Expose the protected base method so the Core 1 worker can drive it.
+    void runBackgroundOnce() { doBackgroundProcessing(); }
+protected:
+    void startBackgroundProcessing() override { sem_release(&s_sem_tail_do); }
+    void waitForBackgroundProcessing() override { sem_acquire_blocking(&s_sem_tail_done); }
+};
+
+static CoreOffloadConvolver s_convolver;
+
+// Convolution runs in a Core 0 FOREGROUND loop, not in the input IRQ. The IRQ
+// only captures + normalises a block into one of these double buffers and signals
+// the foreground; keeping the IRQ light is what stops it delaying the output DMA
+// refill (convolving inside the IRQ smeared the boot tone — 2026-06-05).
+static float s_dsp_in [2][I2S_BLOCK_SIZE];  // double-buffered capture (IRQ writes, fg reads)
 static float s_dsp_out[I2S_BLOCK_SIZE];
+static semaphore_t s_sem_block_ready;       // input IRQ → foreground: a block is captured
+static volatile int g_proc_idx = 0;         // which s_dsp_in buffer the fg should convolve
+
+// 32 KB Core 1 stack — the tail FFT (1024-pt complex for a 512-sample block)
+// needs ~20-30 KB of stack. Mirrors audio/dsp.cpp.
+static uint32_t s_core1_stack[32768 / sizeof(uint32_t)];
+
+// Core 1 entry: process tail blocks as Core 0 hands them off. Nothing else here.
+static void tail_core1_entry(void) {
+    while (true) {
+        sem_acquire_blocking(&s_sem_tail_do);
+        s_convolver.runBackgroundOnce();
+        sem_release(&s_sem_tail_done);
+    }
+}
 #endif
 
 #define MCLK_PIN        21
@@ -93,10 +140,24 @@ static float s_dsp_out[I2S_BLOCK_SIZE];
 //   0           → disabled (normal passthrough_cb behavior)
 #define SCOPE_SENTINEL_VALUE  0u
 
+// Per-second "live pkL=... " UART print. MUST be 0 for clean audio with IR enabled:
+// the convolution now runs in the Core 0 foreground loop, and a blocking ~4 ms UART
+// printf there drops one audio block → a "dull scratch" blip once per second that
+// scales with playing volume (2026-06-05). Sync-loss dumps still print regardless.
+// Set to 1 only for bench telemetry when you can tolerate the periodic blip.
+#define DEBUG_LIVE_PRINT  0
+
 // ---- Buffers ---------------------------------------------------------------
 static int32_t s_in_buf[2][I2S_BLOCK_SIZE * 2];
 static int32_t s_out_buf[2][I2S_BLOCK_SIZE * 2];
-static int32_t s_staging_buf[I2S_BLOCK_SIZE * 2];
+// Double-buffered, published by index. With IR enabled the producer is the Core 0
+// foreground (preemptible), so the output IRQ could otherwise read a half-written
+// buffer (tearing). The producer fills the non-published buffer then flips
+// g_staging_pub atomically; the output IRQ always reads a complete buffer.
+// (ENABLE_IR=0 passthrough keeps writing buffer 0 with g_staging_pub==0 — the
+// input IRQ and output IRQ never preempt each other, so no tearing there.)
+static int32_t      s_staging_buf[2][I2S_BLOCK_SIZE * 2];
+static volatile int g_staging_pub = 0;
 
 static int  s_in_chan[2];
 static PIO  s_in_pio;
@@ -215,6 +276,11 @@ static void input_dma_irq1_handler(void) {
 
         const int32_t *src = s_in_buf[i];
         int32_t peak_l = 0, peak_r = 0, min_l = 0x7fffffff, max_l = (int32_t)0x80000000;
+#if ENABLE_IR
+        // Capture into the next double buffer; the foreground loop convolves it.
+        static int s_dsp_w = 0;
+        float *cap = s_dsp_in[s_dsp_w];
+#endif
         for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
             // << 1 is sign-recovery, not amplitude. PIO empirically captures a
             // leading "delay zero" in bit 31 with audio bits 31..1 in bits 30..0;
@@ -225,20 +291,19 @@ static void input_dma_irq1_handler(void) {
             int32_t r_raw = src[j * 2 + 1] << 1;  // right (LRCLK=1 = odd slots)
 
 #if ENABLE_IR
-            // Stage 1: normalise int32 → float [-1, 1) for the convolver.
-            // Stage 2 (after the sample loop): run FFTConvolver::process() once on
-            // the whole block, then convert back to int32 + scale + clip + write
-            // to s_staging_buf. Peak/min/max here track the RAW INPUT for the
-            // [cal] diagnostic; convolved output peaks are bounded by IR_OUTPUT_SCALE.
-            s_dsp_in[j] = (float)l_raw * (1.0f / 2147483648.0f);
+            // Normalise int32 → float [-1, 1) only. The convolution + scale + clip
+            // happens in the Core 0 FOREGROUND loop (see main), NOT here — keeping
+            // this IRQ light is what stops it delaying the output DMA refill.
+            // Peak/min/max track the RAW INPUT for the [cal] diagnostic.
+            cap[j] = (float)l_raw * (1.0f / 2147483648.0f);
 #else
             // Original passthrough. Digital gain ×1 (no boost). 2026-05-10 LOUT2 →
             // LOUT1 hardware rewire put the HP amp's 6–10 dB gain into the chain;
             // analog +18 dB (ADCCONTROL1=0x66) + digital ×1 + LOUT1 amp = +12 dB
             // chain gain at TSout (verified 2026-05-16 + 2026-05-29 SNR sessions).
             int32_t l = l_raw;
-            s_staging_buf[j * 2]     = l;
-            s_staging_buf[j * 2 + 1] = l;
+            s_staging_buf[0][j * 2]     = l;
+            s_staging_buf[0][j * 2 + 1] = l;
 #endif
 
             int32_t al = l_raw < 0 ? -l_raw : l_raw;
@@ -250,19 +315,12 @@ static void input_dma_irq1_handler(void) {
         }
 
 #if ENABLE_IR
-        // Run the FFT convolution. 512-tap IR on RP2350 HW FPU fits well inside
-        // the 5.3 ms block budget (~30 % of real-time). Longer IRs need a Core 1
-        // worker — see audio/dsp.cpp for the dual-core pattern.
-        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
-
-        for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
-            float f = s_dsp_out[j] * IR_OUTPUT_SCALE;
-            if (f >=  1.0f) f =  0.999999f;
-            if (f <  -1.0f) f = -1.0f;
-            int32_t l = (int32_t)(f * 2147483648.0f);
-            s_staging_buf[j * 2]     = l;
-            s_staging_buf[j * 2 + 1] = l;
-        }
+        // Publish the captured block to the foreground and flip buffers. No
+        // convolution in the IRQ — that is what kept the output DMA on time and
+        // the boot tone clean (2026-06-05).
+        g_proc_idx = s_dsp_w;
+        s_dsp_w ^= 1;
+        sem_release(&s_sem_block_ready);
 #endif
 
         g_peak_l = peak_l;
@@ -338,7 +396,9 @@ static void passthrough_cb(int32_t *buf_done) {
         g_stale_count++;
         return;
     }
-    __builtin_memcpy(s_out_buf[idx], s_staging_buf, I2S_BLOCK_SIZE * 2 * sizeof(int32_t));
+    // Read the most recently PUBLISHED staging buffer — always a complete block,
+    // even if the foreground producer is mid-write on the other buffer.
+    __builtin_memcpy(s_out_buf[idx], s_staging_buf[g_staging_pub], I2S_BLOCK_SIZE * 2 * sizeof(int32_t));
 }
 
 // ---------------------------------------------------------------------------
@@ -547,31 +607,40 @@ int main() {
     irq_set_enabled(DMA_IRQ_1, true);
 
 #if ENABLE_IR
-    // Initialise FFTConvolver with a truncated NT1-A acoustic IR. Must happen
-    // BEFORE the input PIO goes live so the IRQ handler always sees a valid
-    // convolver state. Warm-up calls (one zero pass + one sine pass) exercise
-    // every float code path before the first real-audio block arrives — same
-    // lazy-patching mitigation as audio/dsp.cpp.
+    // Initialise the dual-core convolver with the FULL NT1-A acoustic IR, launch
+    // the Core 1 tail worker, then warm up. Must happen BEFORE the input PIO goes
+    // live so the IRQ handler always sees a valid convolver state. Warm-up (one
+    // zero pass + one sine pass) exercises every float code path before the first
+    // real-audio block — same lazy-patching mitigation as audio/dsp.cpp.
     {
-        const int copy_n = (IR_TAPS < (int)ir_num_samples) ? IR_TAPS : (int)ir_num_samples;
-        for (int j = 0; j < copy_n; j++)        s_ir_buf[j] = ir_samples[j];
-        for (int j = copy_n; j < IR_TAPS; j++)  s_ir_buf[j] = 0.0f;
+        // Binary handoff semaphores. `done` starts PRE-RELEASED (count 1): the
+        // convolver's process() calls waitForBackgroundProcessing() BEFORE the
+        // first startBackgroundProcessing() (see TwoStageFFTConvolver::process),
+        // so without this initial token the first tail block would deadlock.
+        sem_init(&s_sem_tail_do,   0, 1);
+        sem_init(&s_sem_tail_done, 1, 1);
+        // Input IRQ → foreground block handoff (starts empty; IRQ releases per block).
+        sem_init(&s_sem_block_ready, 0, 1);
 
-        if (!s_convolver.init(I2S_BLOCK_SIZE, s_ir_buf, IR_TAPS)) {
-            printf("FFTConvolver init FAILED (heap exhausted?)\n");
+        if (!s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK, ir_samples, ir_num_samples)) {
+            printf("TwoStageFFTConvolver init FAILED (heap exhausted?)\n");
             fflush(stdout);
             while (true) tight_loop_contents();
         }
 
-        // Warm-up — zero pass primes OLA state, sine pass touches every code path.
+        // Launch the Core 1 tail worker BEFORE warm-up so the cross-core handshake
+        // is exercised end-to-end while warming up (not just on the first real block).
+        multicore_launch_core1_with_stack(tail_core1_entry, s_core1_stack, sizeof(s_core1_stack));
+
+        // Warm-up — zero pass primes OLA state, sine pass touches every float path.
         memset(s_dsp_in, 0, sizeof(s_dsp_in));
-        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
+        s_convolver.process(s_dsp_in[0], s_dsp_out, I2S_BLOCK_SIZE);
         for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
-            s_dsp_in[j] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)j / 48000.0f);
+            s_dsp_in[0][j] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)j / 48000.0f);
         }
-        s_convolver.process(s_dsp_in, s_dsp_out, I2S_BLOCK_SIZE);
-        printf("FFTConvolver ready: block=%d IR=%d taps (of %lu) scale=%.2f\n",
-               I2S_BLOCK_SIZE, IR_TAPS, (unsigned long)ir_num_samples,
+        s_convolver.process(s_dsp_in[0], s_dsp_out, I2S_BLOCK_SIZE);
+        printf("TwoStageFFTConvolver ready: head=%d tail=%d IR=%lu taps (full) scale=%.2f\n",
+               IR_HEAD_BLOCK, IR_TAIL_BLOCK, (unsigned long)ir_num_samples,
                (double)IR_OUTPUT_SCALE);
         fflush(stdout);
     }
@@ -599,7 +668,7 @@ int main() {
            (unsigned long)(g_irq1_count - cal_start_irq),
            (uint32_t)g_peak_l, (uint32_t)g_peak_r,
            (uint32_t)(g_max_l - g_min_l),
-           (uint32_t)s_staging_buf[0], (uint32_t)s_staging_buf[1]);
+           (uint32_t)s_staging_buf[g_staging_pub][0], (uint32_t)s_staging_buf[g_staging_pub][1]);
     fflush(stdout);
 
     printf("Running (quiet mode — diagnostics only on sync loss)\n");
@@ -622,7 +691,31 @@ int main() {
 
     uint32_t last_irq1 = 0, last_stale = 0;
     while (true) {
+#if ENABLE_IR
+        // Foreground convolution + ~1 s pacing. The input IRQ only captures blocks
+        // (kept light so it can't delay the output DMA); here we run the head
+        // convolution + scale/clip into the non-published staging buffer, then flip
+        // g_staging_pub so the output IRQ reads a complete block. Process blocks as
+        // they arrive for ~1 s, then fall through to the diagnostics below.
+        uint32_t sec_t0 = time_us_32();
+        while ((time_us_32() - sec_t0) < 1000000u) {
+            if (!sem_acquire_timeout_ms(&s_sem_block_ready, 5)) continue;
+            int b  = g_proc_idx;
+            s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
+            int wb = g_staging_pub ^ 1;            // fill the buffer the output IRQ is NOT reading
+            for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
+                float f = s_dsp_out[j] * IR_OUTPUT_SCALE;
+                if (f >=  1.0f) f =  0.999999f;
+                if (f <  -1.0f) f = -1.0f;
+                int32_t l = (int32_t)(f * 2147483648.0f);
+                s_staging_buf[wb][j * 2]     = l;
+                s_staging_buf[wb][j * 2 + 1] = l;
+            }
+            g_staging_pub = wb;                    // atomic publish to the output IRQ
+        }
+#else
         sleep_ms(1000);
+#endif
         uint32_t irq1  = g_irq1_count;
         uint32_t stale = g_stale_count;
         int32_t  pl    = g_peak_l;
@@ -636,7 +729,7 @@ int main() {
         s->irq1_delta  = irq1 - last_irq1;
         s->stale_delta = stale - last_stale;
         s->pl = pl; s->pr = pr; s->span = span;
-        for (int k = 0; k < 8; k++) s->raw[k] = s_staging_buf[k];
+        for (int k = 0; k < 8; k++) s->raw[k] = s_staging_buf[g_staging_pub][k];
         // Registers have been shown to never drift — skip per-second I2C polls
         // to avoid SDA/SCL edges coupling into the audio path (fridge buzz).
         // Regs are still snapshotted into the ring buffer on sync loss below.
@@ -647,10 +740,14 @@ int main() {
         last_irq1  = irq1;
         last_stale = stale;
 
-        // Live one-line status — pure in-memory reads, no I2C, no audio coupling.
+        // Live one-line status. Default OFF (DEBUG_LIVE_PRINT) — with IR enabled the
+        // blocking UART printf in this foreground thread drops an audio block and
+        // causes a once-per-second blip. Enable only for bench telemetry.
+#if DEBUG_LIVE_PRINT
         printf("live pkL=%08lX pkR=%08lX raw0=%08lX\n",
-               (uint32_t)pl, (uint32_t)pr, (uint32_t)s_staging_buf[0]);
+               (uint32_t)pl, (uint32_t)pr, (uint32_t)s_staging_buf[g_staging_pub][0]);
         fflush(stdout);
+#endif
 
         // Sync-loss detection: span == 0 means every sample in the last block was
         // identical — i.e. the ADC is stuck on any constant (0x00000000, 0xFFFFFFFE,

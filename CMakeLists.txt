@@ -206,6 +206,7 @@ pico_generate_pio_header(es8388_test
 target_include_directories(es8388_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(es8388_test
     pico_stdlib
+    pico_multicore
     hardware_pio
     hardware_dma
     hardware_clocks
@@ -222,3 +223,36 @@ add_dependencies(es8388_test audio_arrays)
 pico_add_extra_outputs(es8388_test)
 pico_enable_stdio_usb(es8388_test 0)
 pico_enable_stdio_uart(es8388_test 1)
+
+# ---- es8388_test_passthrough: identical firmware, ENABLE_IR=0 ----------------
+# Pure passthrough (no convolver, no Core 1). A/B diagnostic target: if the boot
+# tone clips here too, the clipping is in the analog output stage, not the IR path.
+add_executable(es8388_test_passthrough
+    audio/es8388_test.cpp
+    audio/es8388.cpp
+    i2s/i2s.c
+)
+target_compile_definitions(es8388_test_passthrough PRIVATE ENABLE_IR=0)
+pico_generate_pio_header(es8388_test_passthrough
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
+)
+pico_generate_pio_header(es8388_test_passthrough
+    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in_slave.pio
+)
+target_include_directories(es8388_test_passthrough PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(es8388_test_passthrough
+    pico_stdlib
+    pico_multicore
+    hardware_pio
+    hardware_dma
+    hardware_clocks
+    hardware_irq
+    hardware_i2c
+    hardware_resets
+    hardware_pwm
+    fft_convolver
+)
+add_dependencies(es8388_test_passthrough audio_arrays)
+pico_add_extra_outputs(es8388_test_passthrough)
+pico_enable_stdio_usb(es8388_test_passthrough 0)
+pico_enable_stdio_uart(es8388_test_passthrough 1)
