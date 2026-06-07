@@ -69,7 +69,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     ok &= es8388_write(i2c, 0x01, 0x50);  // CONTROL2: refs on
     ok &= es8388_write(i2c, 0x08, 0x00);  // MASTERMODE: slave
     ok &= es8388_write(i2c, 0x17, 0x20);  // DACCONTROL1: 32-bit WL (bits 5:3=100) + Philips I²S (bits 2:1=00). Was 0x18 (16-bit Philips, validated end-to-end including chain-gain/latency tests on 2026-04-27). Stepping up to 32-bit now that the chip is bit-aligned and the chain is clean. PIO timing unchanged (32 BCLKs per channel slot; chip just fills all 32 with audio instead of 16 + 16 zeros).
-    ok &= es8388_write(i2c, 0x18, 0x20);  // DACCONTROL2: bit5=DACFsMode=1 (double speed, 50–100 kHz), bits[4:0]=DACFsRatio=00000 (MCLK/LRCK=128 → 96 kHz at 12.288 MHz MCLK). Was 0x02 (256x ratio, single speed = 48 kHz). FsMode bit is required for the chip's internal interpolation filter to use double-speed coefficients.
+    ok &= es8388_write(i2c, 0x18, 0x02);  // DACCONTROL2: single speed, DACFsRatio=00010 (MCLK/LRCK=256 → 48 kHz at 12.288 MHz MCLK). Reverted from 0x20 (double-speed 96 kHz) 2026-06-07 — 96k ran the IR convolver 2x over budget (dropped blocks) and played the 48k IR at the wrong rate. Must match I2S_SAMPLE_RATE in i2s.h.
     ok &= es8388_write(i2c, 0x1A, 0x00);  // DACCONTROL4: LDAC 0 dB
     ok &= es8388_write(i2c, 0x1B, 0x00);  // DACCONTROL5: RDAC 0 dB
     ok &= es8388_write(i2c, 0x26, 0x00);  // DACCONTROL16: DAC audio path, no LIN bypass
@@ -111,7 +111,7 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     // (16-bit Philips) — moving to 32-bit end-to-end now that chain is validated.
     ok &= es8388_write_verify(i2c, 0x0C, 0x10);
 
-    ok &= es8388_write(i2c, 0x0D, 0x20);  // ADCCONTROL5: bit5=ADCFsMode=1 (double speed), bits[4:0]=ADCFsRatio=00000 (MCLK/LRCK=128 → 96 kHz). Mirrors DACCONTROL2; FsMode required for proper decimation-filter coefficients in 50–100 kHz range.
+    ok &= es8388_write(i2c, 0x0D, 0x02);  // ADCCONTROL5: single speed, ADCFsRatio=00010 (MCLK/LRCK=256 → 48 kHz). Reverted from 0x20 (double-speed 96 kHz) 2026-06-07. Mirrors DACCONTROL2 (0x18).
     ok &= es8388_write(i2c, 0x0F, 0x00);  // ADCCONTROL7: L ADC 0 dB
     ok &= es8388_write(i2c, 0x10, 0x00);  // ADCCONTROL8: R ADC 0 dB
     ok &= es8388_write(i2c, 0x11, 0x00);  // ADCCONTROL9: ALC/volume init (btstack initialises this)

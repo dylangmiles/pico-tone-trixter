@@ -13,7 +13,12 @@ extern "C" {
 #define I2S_DATA_PIN    13   /* DIN: Pico → ES8388 (LEFT side) */
 #define I2S_BCLK_PIN    16   /* BCLK; LRCLK = I2S_BCLK_PIN + 1 = 17 (RIGHT side) */
 
-#define I2S_SAMPLE_RATE 96000
+#define I2S_SAMPLE_RATE 48000  /* 48k single-speed: the IR is a 48k capture and the
+                                * convolver's per-block budget (5333us) assumes 48k.
+                                * 96k double-speed (was here) ran the convolver 2x over
+                                * budget → dropped blocks, and applied the 48k IR at the
+                                * wrong rate (2026-06-07). ES8388 0x18/0x0D revert to
+                                * single-speed alongside this. */
 #define I2S_BLOCK_SIZE  256  /* mono samples per DMA block */
 
 /* Called from DMA_IRQ_0 when a buffer finishes playing.

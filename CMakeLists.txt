@@ -195,6 +195,7 @@ pico_enable_stdio_uart(passthrough_test 1)
 add_executable(es8388_test
     audio/es8388_test.cpp
     audio/es8388.cpp
+    audio/dsp_chain.cpp
     i2s/i2s.c
 )
 pico_generate_pio_header(es8388_test
@@ -216,10 +217,18 @@ target_link_libraries(es8388_test
     hardware_pwm
     fft_convolver
 )
-# IR header (ir_array_<guitar>.h) is regenerated from WAV by gen_audio_arrays.py
-# whenever the source WAV / IR file changes. es8388_test currently includes the
-# Tanglewood IR; switch guitar with -DOFFLINE_GUITAR=garrison on the cmake line.
+# IR headers (ir_array_<guitar>.h) are generated from WAV by gen_audio_arrays.py.
+# es8388_test selects its IR via the #include at the top of es8388_test.cpp
+# (currently ir_array_tanglewood.h) — NOT via -DOFFLINE_GUITAR, which only drives
+# offline_test + the piezo embedding. To change the live pedal's IR, edit that
+# #include. The audio_arrays dep keeps the garrison header fresh from its WAV.
 add_dependencies(es8388_test audio_arrays)
+# Copy the whole binary to SRAM at boot — eliminates XIP flash latency on Core 1's
+# tail FFT. Without this, flash-code contention (worse once the DSP chain was added)
+# stalls the Core 1 FFT past its window → Core 0 waits → dropped audio blocks (a
+# ~2 Hz flutter while playing, confirmed via the `stats` dropped-block counter
+# 2026-06-07). text ~117KB + bss ~54KB + heap/stacks well within RP2350's 520KB.
+pico_set_binary_type(es8388_test copy_to_ram)
 pico_add_extra_outputs(es8388_test)
 pico_enable_stdio_usb(es8388_test 0)
 pico_enable_stdio_uart(es8388_test 1)

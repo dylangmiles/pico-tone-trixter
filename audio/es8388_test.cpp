@@ -38,12 +38,36 @@
 #include "i2s_in_slave.pio.h"
 #include "FFTConvolver.h"
 #include "TwoStageFFTConvolver.h"
-#include "audio/samples/ir_array_garrison.h"
+#include "audio/samples/ir_array_tanglewood.h"   // active IR: Tanglewood (K&K passive). Swap to ir_array_garrison.h for the Garrison.
+#include "audio/dsp_chain.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+
+// Enable FPU Flush-to-Zero on the CALLING core: denormal floats (< ~1e-38) flush to
+// 0 instead of taking the slow IEEE denormal path. The IR's long decaying tail
+// produces tiny denormals as notes ring out; without FZ they stall the FFT enough to
+// drop audio blocks — a signal-dependent glitch (only while notes decay, never in
+// silence; unaffected by copy_to_ram). Flushed values are far below the noise floor,
+// so it's inaudible. FPSCR is per-core, so call this on BOTH Core 0 and Core 1.
+static inline void fpu_enable_flush_to_zero(void) {
+    uint32_t fpscr;
+    __asm__ volatile("vmrs %0, fpscr" : "=r"(fpscr));
+    fpscr |= (1u << 24);   // FZ bit
+    __asm__ volatile("vmsr fpscr, %0" : : "r"(fpscr));
+}
+
+// Timing instrumentation for the dropped-block hunt (reported by `stats`). Worst-case
+// since boot, in microseconds: if maxProc approaches the 5333 us per-block budget,
+// Core 0's block work overruns; if maxTail approaches the 10667 us 2-block window,
+// Core 1's tail FFT is the bottleneck (Core 0 then blocks waiting for it).
+static volatile uint32_t g_max_proc_us = 0;
+static volatile uint32_t g_max_tail_us = 0;
+static volatile uint32_t g_max_uart_us = 0;   // longest dsp_uart_poll() (runs every block)
+static volatile uint32_t g_max_diag_us = 0;   // longest once-per-second diagnostics block
+static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consecutive block services
 
 // ---------------------------------------------------------------------------
 // IR convolution toggle.
@@ -112,10 +136,48 @@ static uint32_t s_core1_stack[32768 / sizeof(uint32_t)];
 
 // Core 1 entry: process tail blocks as Core 0 hands them off. Nothing else here.
 static void tail_core1_entry(void) {
+    fpu_enable_flush_to_zero();   // Core 1's FPU runs the tail FFT — flush denormals
     while (true) {
         sem_acquire_blocking(&s_sem_tail_do);
+        uint32_t t0 = time_us_32();
         s_convolver.runBackgroundOnce();
+        uint32_t dt = time_us_32() - t0;
+        if (dt > g_max_tail_us) g_max_tail_us = dt;
         sem_release(&s_sem_tail_done);
+    }
+}
+
+// Glitch instrumentation. g_irq1_count (input blocks captured) is defined with the
+// IRQ counters further down — forward-declare it so `stats` can read it here.
+extern volatile uint32_t g_irq1_count;
+static volatile uint32_t g_dropped_blocks = 0;   // foreground skipped a captured block
+
+// Non-blocking UART command poll. Accumulates a line; on newline it dispatches to
+// the DSP chain (which now owns the IR on/off flag too). getchar_timeout_us(0) never
+// blocks, so polling between blocks can't drop audio the way a blocking printf would.
+// (Command replies DO printf — a one-block blip per command, fine while tuning.)
+// `stats` reports captured-vs-dropped block counts for glitch diagnosis.
+static void dsp_uart_poll(void) {
+    static char line[64];
+    static int  n = 0;
+    int c;
+    while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+        if (c == '\r' || c == '\n') {
+            if (n > 0) {
+                line[n] = '\0';
+                if (strcmp(line, "stats") == 0)
+                    printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
+                           (unsigned long)g_irq1_count, (unsigned long)g_dropped_blocks,
+                           (unsigned long)g_max_proc_us, (unsigned long)g_max_tail_us,
+                           (unsigned long)g_max_uart_us, (unsigned long)g_max_diag_us,
+                           (unsigned long)g_max_gap_us);
+                else if (!dsp_chain_command(line))
+                    printf("? '%s' (try help)\n", line);
+                n = 0;
+            }
+        } else if (n < (int)sizeof(line) - 1) {
+            line[n++] = (char)c;
+        }
     }
 }
 #endif
@@ -484,6 +546,7 @@ static void dump_all_regs(i2c_inst_t *i2c, const char *label) {
 }
 
 int main() {
+    fpu_enable_flush_to_zero();   // Core 0's FPU (head conv + DSP chain) — flush denormals
     stdio_init_all();
     sleep_ms(300);
     printf("\nES8388 passthrough\n");
@@ -643,6 +706,12 @@ int main() {
                IR_HEAD_BLOCK, IR_TAIL_BLOCK, (unsigned long)ir_num_samples,
                (double)IR_OUTPUT_SCALE);
         fflush(stdout);
+
+        // Post-IR DSP chain (EQ -> Dynamics -> Output level). Output level seeds
+        // at IR_OUTPUT_SCALE so boot audio is unchanged until a stage is enabled.
+        dsp_chain_init((float)I2S_SAMPLE_RATE, IR_OUTPUT_SCALE);
+        printf("DSP chain ready — type 'help' over UART for live tuning.\n");
+        fflush(stdout);
     }
 #else
     printf("IR convolution DISABLED — pure passthrough\n");
@@ -690,21 +759,47 @@ int main() {
     int hist_count = 0;
 
     uint32_t last_irq1 = 0, last_stale = 0;
+    uint32_t last_diag = time_us_32();
+    uint32_t last_fg_irq1 = g_irq1_count;   // dropped-block detector baseline
+    uint32_t last_proc_t  = 0;              // gap-between-services timer baseline
     while (true) {
 #if ENABLE_IR
-        // Foreground convolution + ~1 s pacing. The input IRQ only captures blocks
-        // (kept light so it can't delay the output DMA); here we run the head
-        // convolution + scale/clip into the non-published staging buffer, then flip
-        // g_staging_pub so the output IRQ reads a complete block. Process blocks as
-        // they arrive for ~1 s, then fall through to the diagnostics below.
-        uint32_t sec_t0 = time_us_32();
-        while ((time_us_32() - sec_t0) < 1000000u) {
-            if (!sem_acquire_timeout_ms(&s_sem_block_ready, 5)) continue;
-            int b  = g_proc_idx;
-            s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
+        // CONTINUOUS foreground processing — never stop refilling staging. The
+        // input IRQ only captures blocks (kept light so it can't delay output DMA);
+        // here we convolve + run the DSP chain + clip into the non-published
+        // staging buffer, then flip g_staging_pub so the output IRQ reads a full
+        // block. Diagnostics run inline ~1 Hz WITHOUT pausing block processing —
+        // the old "process for 1 s, then break out to diagnostics" structure left a
+        // once-per-second gap that skipped a block (audible ~1 Hz tick).
+        uint32_t uart_t0 = time_us_32();
+        dsp_uart_poll();                           // non-blocking live-tuning over UART
+        uint32_t uart_dt = time_us_32() - uart_t0;
+        if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
+        if (sem_acquire_timeout_ms(&s_sem_block_ready, 5)) {
+            // g_proc_idx always points at the LATEST captured block, so if the input
+            // IRQ advanced g_irq1_count by >1 since we last ran, the intervening
+            // block(s) were skipped (never convolved) → an IR-tail discontinuity that
+            // only ticks when there's signal. Count them.
+            uint32_t cur_irq1 = g_irq1_count;
+            if ((cur_irq1 - last_fg_irq1) > 1) g_dropped_blocks += (cur_irq1 - last_fg_irq1 - 1);
+            last_fg_irq1 = cur_irq1;
+            uint32_t proc_t0 = time_us_32();
+            if (last_proc_t) {                     // interval since the previous block service
+                uint32_t gap = proc_t0 - last_proc_t;
+                if (gap > g_max_gap_us) g_max_gap_us = gap;
+            }
+            last_proc_t = proc_t0;
+            int b = g_proc_idx;
+            if (dsp_chain_ir_enabled()) {          // IR stage on AND global bypass off
+                s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
+            } else {
+                // IR off / global bypass: dry captured block straight to the chain.
+                __builtin_memcpy(s_dsp_out, s_dsp_in[b], sizeof(s_dsp_out));
+            }
+            dsp_chain_process(s_dsp_out, I2S_BLOCK_SIZE);   // EQ -> Dynamics -> Output level
             int wb = g_staging_pub ^ 1;            // fill the buffer the output IRQ is NOT reading
             for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
-                float f = s_dsp_out[j] * IR_OUTPUT_SCALE;
+                float f = s_dsp_out[j];            // output level applied by the chain's "out" stage
                 if (f >=  1.0f) f =  0.999999f;
                 if (f <  -1.0f) f = -1.0f;
                 int32_t l = (int32_t)(f * 2147483648.0f);
@@ -712,10 +807,15 @@ int main() {
                 s_staging_buf[wb][j * 2 + 1] = l;
             }
             g_staging_pub = wb;                    // atomic publish to the output IRQ
+            uint32_t proc_dt = time_us_32() - proc_t0;   // includes the cross-core tail wait
+            if (proc_dt > g_max_proc_us) g_max_proc_us = proc_dt;
         }
+        if ((time_us_32() - last_diag) < 1000000u) continue;   // diagnostics only ~1 Hz
+        last_diag += 1000000u;
 #else
         sleep_ms(1000);
 #endif
+        uint32_t diag_t0 = time_us_32();
         uint32_t irq1  = g_irq1_count;
         uint32_t stale = g_stale_count;
         int32_t  pl    = g_peak_l;
@@ -778,5 +878,7 @@ int main() {
             fflush(stdout);
             sync_lost_printed = true;
         }
+        uint32_t diag_dt = time_us_32() - diag_t0;
+        if (diag_dt > g_max_diag_us) g_max_diag_us = diag_dt;
     }
 }
