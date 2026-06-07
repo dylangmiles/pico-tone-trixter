@@ -54,6 +54,14 @@ void dsp_chain_process(float *buf, int n);
 // global bypass is off. The actual convolution runs cross-core in es8388_test.cpp.
 bool dsp_chain_ir_enabled(void);
 
+// Peak compressor gain reduction in dB (<= 0) since the last call; resets each call.
+// For a live "GR meter" while dialing the comp threshold. 0 dB = not compressing.
+float dsp_chain_comp_gr_db(void);
+
+// Peak input level to the comp in dBFS since the last call; resets each call. Set
+// comp.thresh relative to this to know where the stage actually engages.
+float dsp_chain_comp_in_db(void);
+
 // Number of stages / accessor — for the future menu to iterate generically.
 int    dsp_chain_stage_count(void);
 Stage *dsp_chain_stage(int i);

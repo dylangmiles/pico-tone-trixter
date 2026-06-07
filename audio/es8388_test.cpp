@@ -92,14 +92,11 @@ static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consec
 #define IR_HEAD_BLOCK   64
 #define IR_TAIL_BLOCK   512
 
-// Post-convolution scaling to keep peaks below 0 dBFS. The full 2048-tap IR has
-// L1 norm (sum|h|) ~19.7 vs ~13.8 for the first 512 taps — ~1.43x more worst-case
-// PEAK gain (RMS/L2 is almost unchanged: 1.29 vs 1.27). So the extra clipping is
-// on transients, and scale must come DOWN vs the 512-tap truncation. 0.70 matches
-// the old 512@1.0 peak behaviour (the validated, clean playing level); 0.5 was
-// audibly quiet so we're back at 0.70. Drop toward 0.5 if hard transients clip
-// (Garrison's spiky piezo). Watch peak_l in [cal]/live.
-#define IR_OUTPUT_SCALE 0.7f
+// Seeds the DSP chain's "out" stage (final output level). Headroom is now handled
+// up front by the chain's "in" trim (the IR adds ~25 dB on transients), so the
+// output stage runs at unity — the K&K-slide gain staging dialed 2026-06-07:
+// in.level 0.30 → comp → out.level 1.00.
+#define IR_OUTPUT_SCALE 1.0f
 
 // --- Core 1 tail-convolution offload ---------------------------------------
 // TwoStageFFTConvolver wraps its tail FFT in startBackgroundProcessing() /
@@ -151,6 +148,7 @@ static void tail_core1_entry(void) {
 // IRQ counters further down — forward-declare it so `stats` can read it here.
 extern volatile uint32_t g_irq1_count;
 static volatile uint32_t g_dropped_blocks = 0;   // foreground skipped a captured block
+static volatile bool     g_meter = false;        // live compressor gain-reduction print (~1/s)
 
 // Non-blocking UART command poll. Accumulates a line; on newline it dispatches to
 // the DSP chain (which now owns the IR on/off flag too). getchar_timeout_us(0) never
@@ -165,7 +163,9 @@ static void dsp_uart_poll(void) {
         if (c == '\r' || c == '\n') {
             if (n > 0) {
                 line[n] = '\0';
-                if (strcmp(line, "stats") == 0)
+                if (strcmp(line, "meter on") == 0)       { g_meter = true;  printf("meter=on\n"); }
+                else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
+                else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
                            (unsigned long)g_irq1_count, (unsigned long)g_dropped_blocks,
                            (unsigned long)g_max_proc_us, (unsigned long)g_max_tail_us,
@@ -839,6 +839,19 @@ int main() {
 
         last_irq1  = irq1;
         last_stale = stale;
+
+#if ENABLE_IR
+        // Live compressor gain-reduction meter (toggle: "meter on|off"). One short line
+        // per second — costs ~1 block/s (a faint blip) like any UART print, fine while
+        // dialing the comp threshold; turn off for clean playing.
+        if (g_meter) {
+            float in = dsp_chain_comp_in_db();   // peak level hitting the comp
+            float gr = dsp_chain_comp_gr_db();    // peak gain reduction
+            printf("comp in %6.1f dBFS   GR %5.1f dB%s\n",
+                   (double)in, (double)gr, gr <= -0.1f ? "" : "  (none)");
+            fflush(stdout);
+        }
+#endif
 
         // Live one-line status. Default OFF (DEBUG_LIVE_PRINT) — with IR enabled the
         // blocking UART printf in this foreground thread drops an audio block and

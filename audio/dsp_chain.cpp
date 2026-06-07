@@ -71,12 +71,12 @@ static void eq_process(Stage *s, float *buf, int n) {
 // ---------------------------------------------------------------------------
 enum { CP_THRESH, CP_RATIO, CP_ATT, CP_REL, CP_MAKEUP, CP_N };
 
-static Param s_cp_params[CP_N] = {
-    { "thresh",  -18.0f, -60.0f,    0.0f,  1.0f, "dB" },
-    { "ratio",     2.0f,   1.0f,   20.0f,  0.5f, ":1" },
-    { "attack",   15.0f,   1.0f,  100.0f,  1.0f, "ms" },
-    { "release", 150.0f,  10.0f, 1000.0f, 10.0f, "ms" },
-    { "makeup",    0.0f, -12.0f,   24.0f,  0.5f, "dB" },
+static Param s_cp_params[CP_N] = {   // defaults tuned for acoustic bottleneck slide (K&K)
+    { "thresh",  -16.0f, -60.0f,    0.0f,  1.0f, "dB" },
+    { "ratio",     3.5f,   1.0f,   20.0f,  0.5f, ":1" },
+    { "attack",   22.0f,   1.0f,  100.0f,  1.0f, "ms" },
+    { "release", 300.0f,  10.0f, 1000.0f, 10.0f, "ms" },
+    { "makeup",    6.0f, -12.0f,   24.0f,  0.5f, "dB" },
 };
 
 typedef struct {
@@ -88,6 +88,8 @@ typedef struct {
     float makeup_lin;
 } CompState;
 static CompState s_cp_state;
+static float     s_comp_gr_peak = 1.0f;   // min comp gain since last meter read (1.0 = no reduction)
+static float     s_comp_in_peak = 0.0f;   // peak |input| to the comp since last meter read
 
 // Recompute the gain only every CP_CTRL samples. The envelope moves on ms time
 // constants, so a ~6 kHz gain update (48k/8) is inaudible but avoids a per-sample
@@ -114,6 +116,7 @@ static void comp_process(Stage *s, float *buf, int n) {
     for (int i = 0; i < n; i++) {
         float x = buf[i];
         float a = fabsf(x);
+        if (a > s_comp_in_peak) s_comp_in_peak = a;   // meter: peak input level
         // Peak detector: fast attack toward rising peaks, slow release. Per-sample.
         if (a > env) env = st->att * env + (1.0f - st->att) * a;
         else         env = st->rel * env + (1.0f - st->rel) * a;
@@ -121,6 +124,7 @@ static void comp_process(Stage *s, float *buf, int n) {
         // log10f + powf, and only every CP_CTRL samples.
         if ((i & (CP_CTRL - 1)) == 0) {
             gain = (env > thr && env > 1e-9f) ? powf(env / thr, slope) : 1.0f;
+            if (gain < s_comp_gr_peak) s_comp_gr_peak = gain;   // meter: track peak reduction
         }
         buf[i] = x * gain * makeup;
     }
@@ -151,6 +155,26 @@ static void out_process(Stage *s, float *buf, int n) {
 }
 
 // ---------------------------------------------------------------------------
+// Input trim — scales the (hot) IR output DOWN before EQ/comp, so the comp sees a
+// sane level and nothing clips even comp-off. The IR adds ~25 dB on transients
+// (peaks hit +12 dBFS); dial in.level on the meter so `comp in` peaks ~-3 dBFS.
+// ---------------------------------------------------------------------------
+enum { IN_LEVEL, IN_N };
+static Param s_in_params[IN_N] = {
+    { "level", 0.30f, 0.0f, 2.0f, 0.01f, "x" },   // dialed for K&K slide: comp-in peaks ~-3 dBFS
+};
+typedef struct { float lin; } InState;
+static InState s_in_state;
+static void in_recompute(Stage *s, float fs) {
+    (void)fs;
+    ((InState *)s->state)->lin = s->params[IN_LEVEL].value;
+}
+static void in_process(Stage *s, float *buf, int n) {
+    float lin = ((InState *)s->state)->lin;
+    for (int i = 0; i < n; i++) buf[i] *= lin;
+}
+
+// ---------------------------------------------------------------------------
 // Chain wiring
 // ---------------------------------------------------------------------------
 // Stage 0: IR — a flag-only stage. The actual 2048-tap convolution runs cross-core
@@ -162,11 +186,12 @@ static void ir_noop_recompute(Stage *s, float fs) { (void)s; (void)fs; }
 static void ir_noop_process(Stage *s, float *buf, int n) { (void)s; (void)buf; (void)n; }
 
 static Stage s_ir   = { "ir",   true,  NULL,         0,     false, ir_noop_recompute, ir_noop_process, NULL };
+static Stage s_in   = { "in",   true,  s_in_params,  IN_N,  true,  in_recompute,   in_process,   &s_in_state  };
 static Stage s_eq   = { "eq",   false, s_eq_params,  EQ_N,  true,  eq_recompute,   eq_process,   &s_eq_state  };
-static Stage s_comp = { "comp", false, s_cp_params,  CP_N,  true,  comp_recompute, comp_process, &s_cp_state  };
+static Stage s_comp = { "comp", true,  s_cp_params,  CP_N,  true,  comp_recompute, comp_process, &s_cp_state  };
 static Stage s_out  = { "out",  true,  s_out_params, OUT_N, true,  out_recompute,  out_process,  &s_out_state };
 
-static Stage *s_chain[] = { &s_ir, &s_eq, &s_comp, &s_out };
+static Stage *s_chain[] = { &s_ir, &s_in, &s_eq, &s_comp, &s_out };
 #define N_STAGES ((int)(sizeof(s_chain) / sizeof(s_chain[0])))
 
 int    dsp_chain_stage_count(void) { return N_STAGES; }
@@ -175,6 +200,25 @@ Stage *dsp_chain_stage(int i)      { return (i >= 0 && i < N_STAGES) ? s_chain[i
 // Effective IR state for es8388_test's foreground loop: on only if the IR stage is
 // enabled AND global bypass is off.
 bool dsp_chain_ir_enabled(void) { return s_ir.enabled && !g_dsp_bypass; }
+
+// Peak compressor gain reduction (dB, <= 0) since the last call; resets each call so
+// a periodic reader gets "peak GR over the interval". 0 dB = not compressing.
+float dsp_chain_comp_gr_db(void) {
+    float g = s_comp_gr_peak;
+    s_comp_gr_peak = 1.0f;
+    if (g >= 1.0f) return 0.0f;
+    if (g < 1e-6f) g = 1e-6f;
+    return 20.0f * log10f(g);
+}
+
+// Peak input level to the compressor (dBFS) since the last call; resets each call.
+// Lets you set comp.thresh relative to the actual signal hitting the stage.
+float dsp_chain_comp_in_db(void) {
+    float p = s_comp_in_peak;
+    s_comp_in_peak = 0.0f;
+    if (p < 1e-6f) return -120.0f;
+    return 20.0f * log10f(p);
+}
 
 void dsp_chain_init(float fs, float out_level_lin) {
     g_fs = fs;
@@ -231,10 +275,13 @@ static void chain_help(void) {
     printf("DSP commands:\n"
            "  <stage>.<param> <val>   set param   (e.g. eq.mid_gain 3.5)\n"
            "  <stage>.<param>         show param\n"
-           "  <stage> on|off          enable/bypass stage (eq, comp, out)\n"
+           "  <stage> on|off          enable/bypass stage (in, eq, comp, out)\n"
+           "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
            "  bypass on|off           kill IR+EQ+Dynamics (output level only)\n"
            "  ir on|off               IR convolution on/off (independent of bypass)\n"
+           "  meter on|off            live compressor gain-reduction readout (~1/s)\n"
            "  dump                    list all stages + params\n"
+           "  stats                   block / timing counters\n"
            "  help                    this\n");
 }
 
