@@ -279,6 +279,7 @@ static void chain_help(void) {
            "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
            "  bypass on|off           kill IR+EQ+Dynamics (output level only)\n"
            "  ir on|off               IR convolution on/off (independent of bypass)\n"
+           "  tuner on|off            guitar tuner (UART needle; dry monitor)\n"
            "  meter on|off            live compressor gain-reduction readout (~1/s)\n"
            "  dump                    list all stages + params\n"
            "  stats                   block / timing counters\n"

@@ -196,6 +196,7 @@ add_executable(es8388_test
     audio/es8388_test.cpp
     audio/es8388.cpp
     audio/dsp_chain.cpp
+    audio/tuner.cpp
     i2s/i2s.c
 )
 pico_generate_pio_header(es8388_test

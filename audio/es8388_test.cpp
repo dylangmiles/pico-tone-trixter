@@ -40,6 +40,7 @@
 #include "TwoStageFFTConvolver.h"
 #include "audio/samples/ir_array_tanglewood.h"   // active IR: Tanglewood (K&K passive). Swap to ir_array_garrison.h for the Garrison.
 #include "audio/dsp_chain.h"
+#include "audio/tuner.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include <cstring>
@@ -149,6 +150,24 @@ static void tail_core1_entry(void) {
 extern volatile uint32_t g_irq1_count;
 static volatile uint32_t g_dropped_blocks = 0;   // foreground skipped a captured block
 static volatile bool     g_meter = false;        // live compressor gain-reduction print (~1/s)
+static volatile bool     g_tuner = false;        // tuner mode: pitch-detect dry input, UART needle
+
+// Print one tuner line: note + cents + an ASCII needle ([:] = in tune, # = pitch).
+static void tuner_print_uart(void) {
+    TunerResult r = tuner_result();
+    if (!r.valid) { printf("tuner:  --   (listening)\n"); return; }
+    char bar[22];
+    for (int i = 0; i < 21; i++) bar[i] = '-';
+    bar[10] = ':';                                       // in-tune center
+    int pos = 10 + (int)lroundf(r.cents / 5.0f);          // -50..+50 cents -> 0..20
+    if (pos < 0)  pos = 0;
+    if (pos > 20) pos = 20;
+    bar[pos] = '#';                                       // the needle
+    bar[21] = '\0';
+    const char *st = (r.cents > 5.0f) ? "SHARP" : (r.cents < -5.0f) ? "FLAT" : "IN TUNE";
+    printf("%-2s%-2d %6.1f Hz  [%s] %+5.1fc  %s\n",
+           r.name, r.octave, (double)r.freq_hz, bar, (double)r.cents, st);
+}
 
 // Non-blocking UART command poll. Accumulates a line; on newline it dispatches to
 // the DSP chain (which now owns the IR on/off flag too). getchar_timeout_us(0) never
@@ -163,7 +182,9 @@ static void dsp_uart_poll(void) {
         if (c == '\r' || c == '\n') {
             if (n > 0) {
                 line[n] = '\0';
-                if (strcmp(line, "meter on") == 0)       { g_meter = true;  printf("meter=on\n"); }
+                if (strcmp(line, "tuner on") == 0)       { g_tuner = true;  printf("tuner=on (dry monitor; 'tuner off' to resume)\n"); }
+                else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
+                else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }
                 else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
                 else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
@@ -710,6 +731,7 @@ int main() {
         // Post-IR DSP chain (EQ -> Dynamics -> Output level). Output level seeds
         // at IR_OUTPUT_SCALE so boot audio is unchanged until a stage is enabled.
         dsp_chain_init((float)I2S_SAMPLE_RATE, IR_OUTPUT_SCALE);
+        tuner_init((float)I2S_SAMPLE_RATE);
         printf("DSP chain ready — type 'help' over UART for live tuning.\n");
         fflush(stdout);
     }
@@ -790,13 +812,21 @@ int main() {
             }
             last_proc_t = proc_t0;
             int b = g_proc_idx;
-            if (dsp_chain_ir_enabled()) {          // IR stage on AND global bypass off
-                s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
-            } else {
-                // IR off / global bypass: dry captured block straight to the chain.
+            if (g_tuner) {
+                // Tuner mode: estimate pitch from the dry input, monitor dry (skip the
+                // IR + chain so Core 0 has budget for YIN). The estimate every ~85 ms
+                // briefly stalls the passthrough — irrelevant while tuning.
+                if (tuner_feed(s_dsp_in[b], I2S_BLOCK_SIZE)) tuner_print_uart();
                 __builtin_memcpy(s_dsp_out, s_dsp_in[b], sizeof(s_dsp_out));
+            } else {
+                if (dsp_chain_ir_enabled()) {      // IR stage on AND global bypass off
+                    s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
+                } else {
+                    // IR off / global bypass: dry captured block straight to the chain.
+                    __builtin_memcpy(s_dsp_out, s_dsp_in[b], sizeof(s_dsp_out));
+                }
+                dsp_chain_process(s_dsp_out, I2S_BLOCK_SIZE);   // EQ -> Dynamics -> Output level
             }
-            dsp_chain_process(s_dsp_out, I2S_BLOCK_SIZE);   // EQ -> Dynamics -> Output level
             int wb = g_staging_pub ^ 1;            // fill the buffer the output IRQ is NOT reading
             for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
                 float f = s_dsp_out[j];            // output level applied by the chain's "out" stage
