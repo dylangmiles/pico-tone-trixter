@@ -38,7 +38,15 @@
 #include "i2s_in_slave.pio.h"
 #include "FFTConvolver.h"
 #include "TwoStageFFTConvolver.h"
-#include "audio/samples/ir_array_tanglewood.h"   // active IR: Tanglewood (K&K passive). Swap to ir_array_garrison.h for the Garrison.
+// Both IRs are compiled in so presets can switch them at runtime. Each is a 48 kHz
+// 2048-tap capture; the headers use per-file #pragma once and share the symbol names
+// ir_samples / ir_num_samples, so each is included in its own namespace.
+namespace ir_tw {
+#include "audio/samples/ir_array_tanglewood.h"
+}
+namespace ir_gn {
+#include "audio/samples/ir_array_garrison.h"
+}
 #include "audio/dsp_chain.h"
 #include "audio/tuner.h"
 #include "pico/multicore.h"
@@ -128,6 +136,14 @@ static float s_dsp_out[I2S_BLOCK_SIZE];
 static semaphore_t s_sem_block_ready;       // input IRQ → foreground: a block is captured
 static volatile int g_proc_idx = 0;         // which s_dsp_in buffer the fg should convolve
 
+// IR table — index matches the preset ir_id field in dsp_chain.cpp.
+static const struct { const float *samples; uint32_t len; const char *name; } s_ir_table[] = {
+    { ir_tw::ir_samples, ir_tw::ir_num_samples, "tanglewood" },
+    { ir_gn::ir_samples, ir_gn::ir_num_samples, "garrison"   },
+};
+static int          s_cur_ir     = 0;       // currently loaded IR (boot = tanglewood)
+static volatile int g_pending_ir = -1;      // preset requested an IR switch; foreground applies it safely
+
 // 32 KB Core 1 stack — the tail FFT (1024-pt complex for a 512-sample block)
 // needs ~20-30 KB of stack. Mirrors audio/dsp.cpp.
 static uint32_t s_core1_stack[32768 / sizeof(uint32_t)];
@@ -182,7 +198,26 @@ static void dsp_uart_poll(void) {
         if (c == '\r' || c == '\n') {
             if (n > 0) {
                 line[n] = '\0';
-                if (strcmp(line, "tuner on") == 0)       { g_tuner = true;  printf("tuner=on (dry monitor; 'tuner off' to resume)\n"); }
+                if (strcmp(line, "preset") == 0 || strncmp(line, "preset ", 7) == 0) {
+                    const char *arg = line + 6;
+                    while (*arg == ' ') arg++;
+                    if (*arg == '\0') {                  // list
+                        printf("presets:");
+                        for (int i = 0; i < dsp_chain_preset_count(); i++)
+                            printf(" %s", dsp_chain_preset_name(i));
+                        printf("   (IR now: %s)\n", s_ir_table[s_cur_ir].name);
+                    } else {
+                        int idx = dsp_chain_find_preset(arg);
+                        if (idx < 0) { printf("? no preset '%s'\n", arg); }
+                        else {
+                            int ir = dsp_chain_load_preset(idx);   // params apply now
+                            if (ir >= 0 && ir != s_cur_ir) g_pending_ir = ir;   // IR switches in the fg
+                            printf("preset '%s' loaded (IR %s)\n", dsp_chain_preset_name(idx),
+                                   s_ir_table[ir >= 0 ? ir : s_cur_ir].name);
+                        }
+                    }
+                }
+                else if (strcmp(line, "tuner on") == 0)  { g_tuner = true;  printf("tuner=on (dry monitor; 'tuner off' to resume)\n"); }
                 else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
                 else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }
                 else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
@@ -706,7 +741,8 @@ int main() {
         // Input IRQ → foreground block handoff (starts empty; IRQ releases per block).
         sem_init(&s_sem_block_ready, 0, 1);
 
-        if (!s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK, ir_samples, ir_num_samples)) {
+        if (!s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK,
+                              s_ir_table[s_cur_ir].samples, s_ir_table[s_cur_ir].len)) {
             printf("TwoStageFFTConvolver init FAILED (heap exhausted?)\n");
             fflush(stdout);
             while (true) tight_loop_contents();
@@ -723,16 +759,17 @@ int main() {
             s_dsp_in[0][j] = 0.5f * sinf(2.0f * 3.14159265f * 440.0f * (float)j / 48000.0f);
         }
         s_convolver.process(s_dsp_in[0], s_dsp_out, I2S_BLOCK_SIZE);
-        printf("TwoStageFFTConvolver ready: head=%d tail=%d IR=%lu taps (full) scale=%.2f\n",
-               IR_HEAD_BLOCK, IR_TAIL_BLOCK, (unsigned long)ir_num_samples,
-               (double)IR_OUTPUT_SCALE);
+        printf("TwoStageFFTConvolver ready: IR=%s %lu taps, head=%d tail=%d\n",
+               s_ir_table[s_cur_ir].name, (unsigned long)s_ir_table[s_cur_ir].len,
+               IR_HEAD_BLOCK, IR_TAIL_BLOCK);
         fflush(stdout);
 
         // Post-IR DSP chain (EQ -> Dynamics -> Output level). Output level seeds
         // at IR_OUTPUT_SCALE so boot audio is unchanged until a stage is enabled.
         dsp_chain_init((float)I2S_SAMPLE_RATE, IR_OUTPUT_SCALE);
         tuner_init((float)I2S_SAMPLE_RATE);
-        printf("DSP chain ready — type 'help' over UART for live tuning.\n");
+        dsp_chain_load_preset(0);   // boot = preset 0 (tanglewood-slide); IR already matches s_cur_ir
+        printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
     }
 #else
@@ -805,6 +842,20 @@ int main() {
             uint32_t cur_irq1 = g_irq1_count;
             if ((cur_irq1 - last_fg_irq1) > 1) g_dropped_blocks += (cur_irq1 - last_fg_irq1 - 1);
             last_fg_irq1 = cur_irq1;
+
+            // Apply a pending preset IR switch at a safe point: park Core 1 (drain any
+            // in-flight tail), re-init the convolver with the new IR, restore the token
+            // process() expects. A brief glitch on switch is fine — it's a deliberate
+            // user action. Done OUTSIDE the proc timer below.
+            if (g_pending_ir >= 0) {
+                sem_acquire_blocking(&s_sem_tail_done);
+                s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK,
+                                 s_ir_table[g_pending_ir].samples, s_ir_table[g_pending_ir].len);
+                sem_release(&s_sem_tail_done);
+                s_cur_ir = g_pending_ir;
+                g_pending_ir = -1;
+            }
+
             uint32_t proc_t0 = time_us_32();
             if (last_proc_t) {                     // interval since the previous block service
                 uint32_t gap = proc_t0 - last_proc_t;

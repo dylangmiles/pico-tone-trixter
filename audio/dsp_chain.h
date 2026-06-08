@@ -62,6 +62,14 @@ float dsp_chain_comp_gr_db(void);
 // comp.thresh relative to this to know where the stage actually engages.
 float dsp_chain_comp_in_db(void);
 
+// --- Presets: named bundles of (IR id + every stage's params/enables) ----------
+int         dsp_chain_preset_count(void);
+const char *dsp_chain_preset_name(int idx);
+int         dsp_chain_find_preset(const char *name);   // -1 if not found
+// Apply preset idx (sets every stage's params + enables, marks them dirty). Returns
+// the preset's IR id so the host can switch the convolver IR; -1 on bad index.
+int         dsp_chain_load_preset(int idx);
+
 // Number of stages / accessor — for the future menu to iterate generically.
 int    dsp_chain_stage_count(void);
 Stage *dsp_chain_stage(int i);

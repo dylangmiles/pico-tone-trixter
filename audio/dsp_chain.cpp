@@ -220,6 +220,55 @@ float dsp_chain_comp_in_db(void) {
     return 20.0f * log10f(p);
 }
 
+// ---------------------------------------------------------------------------
+// Presets — IR id + every stage's params/enables. ir_id is interpreted by the
+// host (es8388_test): 0 = Tanglewood, 1 = Garrison.
+// ---------------------------------------------------------------------------
+typedef struct {
+    const char *name;
+    int   ir_id;
+    bool  in_on, eq_on, comp_on, out_on;
+    float in_level;
+    float lo_f, lo_g, mid_f, mid_g, mid_q, hi_f, hi_g;
+    float thr, ratio, att, rel, mkup;
+    float out_level;
+} Preset;
+
+static const Preset s_presets[] = {
+    // name              ir  in    eq     cmp   out   in    lo_f lo_g mid_f mid_g mid_q hi_f  hi_g  thr  ratio att rel  mkup out
+    { "tanglewood-slide", 0, true, true,  true, true, 0.30f, 150,  3,  800, -3,  1.0f, 1500, -2,  -16, 3.5f, 22, 300,  6,  0.70f },
+    { "default",          0, true, false, true, true, 0.30f, 120,  0,  700,  0,  1.0f, 3500,  0,  -20, 2.0f, 20, 200,  3,  0.80f },
+    { "garrison",         1, true, false, true, true, 0.30f, 120,  0,  700,  0,  1.0f, 3500,  0,  -18, 3.0f, 20, 250,  5,  0.70f },
+};
+#define N_PRESETS ((int)(sizeof(s_presets) / sizeof(s_presets[0])))
+
+int         dsp_chain_preset_count(void)     { return N_PRESETS; }
+const char *dsp_chain_preset_name(int idx)   { return (idx >= 0 && idx < N_PRESETS) ? s_presets[idx].name : ""; }
+
+int dsp_chain_find_preset(const char *name) {
+    for (int i = 0; i < N_PRESETS; i++)
+        if (strcmp(s_presets[i].name, name) == 0) return i;
+    return -1;
+}
+
+int dsp_chain_load_preset(int idx) {
+    if (idx < 0 || idx >= N_PRESETS) return -1;
+    const Preset *p = &s_presets[idx];
+    s_in.enabled = p->in_on;  s_eq.enabled = p->eq_on;
+    s_comp.enabled = p->comp_on;  s_out.enabled = p->out_on;
+    s_in_params[IN_LEVEL].value  = p->in_level;
+    s_eq_params[EQ_LO_F].value   = p->lo_f;  s_eq_params[EQ_LO_G].value  = p->lo_g;
+    s_eq_params[EQ_MID_F].value  = p->mid_f; s_eq_params[EQ_MID_G].value = p->mid_g;
+    s_eq_params[EQ_MID_Q].value  = p->mid_q;
+    s_eq_params[EQ_HI_F].value   = p->hi_f;  s_eq_params[EQ_HI_G].value  = p->hi_g;
+    s_cp_params[CP_THRESH].value = p->thr;   s_cp_params[CP_RATIO].value = p->ratio;
+    s_cp_params[CP_ATT].value    = p->att;   s_cp_params[CP_REL].value   = p->rel;
+    s_cp_params[CP_MAKEUP].value = p->mkup;
+    s_out_params[OUT_LEVEL].value = p->out_level;
+    s_in.dirty = s_eq.dirty = s_comp.dirty = s_out.dirty = true;
+    return p->ir_id;
+}
+
 void dsp_chain_init(float fs, float out_level_lin) {
     g_fs = fs;
     s_out_params[OUT_LEVEL].value = out_level_lin;
@@ -276,6 +325,7 @@ static void chain_help(void) {
            "  <stage>.<param> <val>   set param   (e.g. eq.mid_gain 3.5)\n"
            "  <stage>.<param>         show param\n"
            "  <stage> on|off          enable/bypass stage (in, eq, comp, out)\n"
+           "  preset [name]           list presets, or load one (switches IR too)\n"
            "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
            "  bypass on|off           kill IR+EQ+Dynamics (output level only)\n"
            "  ir on|off               IR convolution on/off (independent of bypass)\n"
