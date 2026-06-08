@@ -25,14 +25,14 @@ static float g_fs = 48000.0f;
 // ---------------------------------------------------------------------------
 enum { EQ_LO_F, EQ_LO_G, EQ_MID_F, EQ_MID_G, EQ_MID_Q, EQ_HI_F, EQ_HI_G, EQ_N };
 
-static Param s_eq_params[EQ_N] = {
-    { "lo_freq",   120.0f,   40.0f,   500.0f,   5.0f, "Hz" },
-    { "lo_gain",     0.0f,  -15.0f,    15.0f,   0.5f, "dB" },
-    { "mid_freq",  700.0f,  200.0f,  4000.0f,  10.0f, "Hz" },
-    { "mid_gain",    0.0f,  -15.0f,    15.0f,   0.5f, "dB" },
+static Param s_eq_params[EQ_N] = {   // voiced for warm open-G acoustic slide (K&K), dialed 2026-06-08
+    { "lo_freq",   150.0f,   40.0f,   500.0f,   5.0f, "Hz" },   // +3 dB shelf: body/warmth
+    { "lo_gain",     3.0f,  -15.0f,    15.0f,   0.5f, "dB" },
+    { "mid_freq",  800.0f,  200.0f,  4000.0f,  10.0f, "Hz" },   // -3 dB scoop: de-honk, vocal mids
+    { "mid_gain",   -3.0f,  -15.0f,    15.0f,   0.5f, "dB" },
     { "mid_q",       1.0f,    0.3f,     4.0f,   0.1f, "Q"  },
-    { "hi_freq",  3500.0f, 1500.0f, 12000.0f,  50.0f, "Hz" },
-    { "hi_gain",     0.0f,  -15.0f,    15.0f,   0.5f, "dB" },
+    { "hi_freq",  1500.0f, 1500.0f, 12000.0f,  50.0f, "Hz" },   // -2 dB shelf: roll off slide scrape
+    { "hi_gain",    -2.0f,  -15.0f,    15.0f,   0.5f, "dB" },
 };
 
 typedef struct { Biquad lo, mid, hi; } EqState;
@@ -187,7 +187,7 @@ static void ir_noop_process(Stage *s, float *buf, int n) { (void)s; (void)buf; (
 
 static Stage s_ir   = { "ir",   true,  NULL,         0,     false, ir_noop_recompute, ir_noop_process, NULL };
 static Stage s_in   = { "in",   true,  s_in_params,  IN_N,  true,  in_recompute,   in_process,   &s_in_state  };
-static Stage s_eq   = { "eq",   false, s_eq_params,  EQ_N,  true,  eq_recompute,   eq_process,   &s_eq_state  };
+static Stage s_eq   = { "eq",   true,  s_eq_params,  EQ_N,  true,  eq_recompute,   eq_process,   &s_eq_state  };
 static Stage s_comp = { "comp", true,  s_cp_params,  CP_N,  true,  comp_recompute, comp_process, &s_cp_state  };
 static Stage s_out  = { "out",  true,  s_out_params, OUT_N, true,  out_recompute,  out_process,  &s_out_state };
 

@@ -93,11 +93,11 @@ static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consec
 #define IR_HEAD_BLOCK   64
 #define IR_TAIL_BLOCK   512
 
-// Seeds the DSP chain's "out" stage (final output level). Headroom is now handled
-// up front by the chain's "in" trim (the IR adds ~25 dB on transients), so the
-// output stage runs at unity — the K&K-slide gain staging dialed 2026-06-07:
-// in.level 0.30 → comp → out.level 1.00.
-#define IR_OUTPUT_SCALE 1.0f
+// Seeds the DSP chain's "out" stage (final output level). Headroom is handled up
+// front by the chain's "in" trim (the IR adds ~25 dB on transients). K&K-slide gain
+// staging: in.level 0.30 → EQ (+3 dB low boost) → comp → out.level 0.70 (pulled back
+// from 1.0 to balance the EQ low boost, dialed 2026-06-08).
+#define IR_OUTPUT_SCALE 0.7f
 
 // --- Core 1 tail-convolution offload ---------------------------------------
 // TwoStageFFTConvolver wraps its tail FFT in startBackgroundProcessing() /
