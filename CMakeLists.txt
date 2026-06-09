@@ -25,41 +25,11 @@ target_include_directories(fft_convolver PUBLIC lib/FFTConvolver)
 target_compile_definitions(fft_convolver PRIVATE NDEBUG)
 # RP2350 (Cortex-M33) has hardware FPU — pico_float/pico_double are not needed.
 
-# ---- Main executable ----
-add_executable(pico_tone_trixter
-    main.cpp
-    i2s/i2s.c
-    audio/pipeline.cpp
-    audio/dsp.cpp
-)
-
-# Generate C header from the PIO assembly
-pico_generate_pio_header(pico_tone_trixter
-    ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
-)
-
-# Project root on the include path so all files can use "i2s/i2s.h", "audio/pipeline.h", etc.
-target_include_directories(pico_tone_trixter PRIVATE ${CMAKE_CURRENT_LIST_DIR})
-
-target_link_libraries(pico_tone_trixter
-    pico_stdlib
-    pico_multicore
-    hardware_pwm
-    hardware_pio
-    hardware_dma
-    hardware_irq
-    hardware_watchdog
-    fft_convolver
-)
-
-# Copy entire binary to SRAM at boot — eliminates XIP flash latency on Core 1.
-# text=96KB + bss=54KB = 150KB, well within the 264KB SRAM limit.
-pico_set_binary_type(pico_tone_trixter copy_to_ram)
-
-pico_add_extra_outputs(pico_tone_trixter)
-
-pico_enable_stdio_usb(pico_tone_trixter 0)
-pico_enable_stdio_uart(pico_tone_trixter 1)
+# ---- Product firmware: pico_tone_trixter ----
+# The product (ES8388 live chain → dual-core 2048-tap IR → DSP chain → tuner →
+# presets, built from main.cpp) is defined further down — it's the promoted former
+# `es8388_test` target. The old sine-fed scaffold (the previous main.cpp +
+# audio/pipeline.cpp + audio/dsp.cpp) was retired 2026-06-09 in the pipeline refactor.
 
 # ============================================================
 # Offline IR test — processes embedded audio and streams WAV
@@ -189,24 +159,27 @@ pico_enable_stdio_usb(passthrough_test 0)
 pico_enable_stdio_uart(passthrough_test 1)
 
 # ============================================================
-# ES8388 unified codec passthrough test — ES8388 ADC → Pico 2 → ES8388 DAC.
-# Replaces PCM1808 + CS4344 with a single ES8388 module.
+# PRODUCT — pico_tone_trixter: guitar → ES8388 ADC → Pico 2 dual-core 2048-tap
+# IR convolution → DSP chain (input trim / 3-band EQ / comp-limiter-sustain /
+# output) → ES8388 DAC. Plus a YIN tuner and runtime-switchable presets, all
+# live-tunable over UART. Built from main.cpp (promoted from the former
+# `es8388_test` in the 2026-06-09 pipeline refactor).
 # ============================================================
-add_executable(es8388_test
-    audio/es8388_test.cpp
+add_executable(pico_tone_trixter
+    main.cpp
     audio/es8388.cpp
     audio/dsp_chain.cpp
     audio/tuner.cpp
     i2s/i2s.c
 )
-pico_generate_pio_header(es8388_test
+pico_generate_pio_header(pico_tone_trixter
     ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
 )
-pico_generate_pio_header(es8388_test
+pico_generate_pio_header(pico_tone_trixter
     ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in_slave.pio
 )
-target_include_directories(es8388_test PRIVATE ${CMAKE_CURRENT_LIST_DIR})
-target_link_libraries(es8388_test
+target_include_directories(pico_tone_trixter PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(pico_tone_trixter
     pico_stdlib
     pico_multicore
     hardware_pio
@@ -218,39 +191,36 @@ target_link_libraries(es8388_test
     hardware_pwm
     fft_convolver
 )
-# IR headers (ir_array_<guitar>.h) are generated from WAV by gen_audio_arrays.py.
-# es8388_test selects its IR via the #include at the top of es8388_test.cpp
-# (currently ir_array_tanglewood.h) — NOT via -DOFFLINE_GUITAR, which only drives
-# offline_test + the piezo embedding. To change the live pedal's IR, edit that
-# #include. The audio_arrays dep keeps the garrison header fresh from its WAV.
-add_dependencies(es8388_test audio_arrays)
+# Both IR headers (ir_array_{tanglewood,garrison}.h) are generated from WAV by
+# gen_audio_arrays.py and #include'd (each in its own namespace) in main.cpp;
+# presets switch between them at runtime. audio_arrays keeps them fresh from the WAVs.
+add_dependencies(pico_tone_trixter audio_arrays)
 # Copy the whole binary to SRAM at boot — eliminates XIP flash latency on Core 1's
-# tail FFT. Without this, flash-code contention (worse once the DSP chain was added)
-# stalls the Core 1 FFT past its window → Core 0 waits → dropped audio blocks (a
-# ~2 Hz flutter while playing, confirmed via the `stats` dropped-block counter
-# 2026-06-07). text ~117KB + bss ~54KB + heap/stacks well within RP2350's 520KB.
-pico_set_binary_type(es8388_test copy_to_ram)
-pico_add_extra_outputs(es8388_test)
-pico_enable_stdio_usb(es8388_test 0)
-pico_enable_stdio_uart(es8388_test 1)
+# tail FFT (without it, flash contention stalls the FFT past its window → Core 0
+# waits → dropped audio blocks).
+pico_set_binary_type(pico_tone_trixter copy_to_ram)
+pico_add_extra_outputs(pico_tone_trixter)
+pico_enable_stdio_usb(pico_tone_trixter 0)
+pico_enable_stdio_uart(pico_tone_trixter 1)
 
-# ---- es8388_test_passthrough: identical firmware, ENABLE_IR=0 ----------------
-# Pure passthrough (no convolver, no Core 1). A/B diagnostic target: if the boot
-# tone clips here too, the clipping is in the analog output stage, not the IR path.
-add_executable(es8388_test_passthrough
-    audio/es8388_test.cpp
+# ---- es8388_codec_bench: same firmware, ENABLE_IR=0 --------------------------
+# Codec bench / A/B reference: pure passthrough — no convolver, no Core 1, no DSP
+# chain. Validates ES8388 bring-up + the raw signal chain independent of the IR/DSP
+# path. (Was es8388_test_passthrough before the 2026-06-09 pipeline refactor.)
+add_executable(es8388_codec_bench
+    main.cpp
     audio/es8388.cpp
     i2s/i2s.c
 )
-target_compile_definitions(es8388_test_passthrough PRIVATE ENABLE_IR=0)
-pico_generate_pio_header(es8388_test_passthrough
+target_compile_definitions(es8388_codec_bench PRIVATE ENABLE_IR=0)
+pico_generate_pio_header(es8388_codec_bench
     ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_out.pio
 )
-pico_generate_pio_header(es8388_test_passthrough
+pico_generate_pio_header(es8388_codec_bench
     ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in_slave.pio
 )
-target_include_directories(es8388_test_passthrough PRIVATE ${CMAKE_CURRENT_LIST_DIR})
-target_link_libraries(es8388_test_passthrough
+target_include_directories(es8388_codec_bench PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(es8388_codec_bench
     pico_stdlib
     pico_multicore
     hardware_pio
@@ -262,7 +232,7 @@ target_link_libraries(es8388_test_passthrough
     hardware_pwm
     fft_convolver
 )
-add_dependencies(es8388_test_passthrough audio_arrays)
-pico_add_extra_outputs(es8388_test_passthrough)
-pico_enable_stdio_usb(es8388_test_passthrough 0)
-pico_enable_stdio_uart(es8388_test_passthrough 1)
+add_dependencies(es8388_codec_bench audio_arrays)
+pico_add_extra_outputs(es8388_codec_bench)
+pico_enable_stdio_usb(es8388_codec_bench 0)
+pico_enable_stdio_uart(es8388_codec_bench 1)
