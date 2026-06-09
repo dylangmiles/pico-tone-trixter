@@ -22,51 +22,76 @@ Output UF2: `cmake-build-debug/pico_tone_trixter.uf2`
 
 ## Architecture
 
-Real-time audio DSP pipeline with FFT convolution reverb.
+Real-time guitar pedal: guitar → ES8388 ADC → Pico 2 dual-core 2048-tap acoustic-body
+IR convolution → DSP chain (input trim → 3-band EQ → comp/limiter/sustain → output) →
+ES8388 DAC. Plus a YIN tuner and runtime-switchable presets, all live-tunable over UART.
+
+### Targets (CMakeLists.txt)
+
+- **`pico_tone_trixter`** — THE product, built from `main.cpp`. `copy_to_ram`.
+- **`es8388_codec_bench`** — same `main.cpp` with `ENABLE_IR=0`: pure passthrough, no
+  convolver / Core 1 / DSP chain. A/B reference for ES8388 bring-up + raw signal chain.
+- `offline_test`, `pcm1808_test`, `passthrough_test` — standalone bench tools.
+
+> History: the product was the `es8388_test` target (audio/es8388_test.cpp) until the
+> 2026-06-09 pipeline refactor. A stale sine-fed scaffold (the old main.cpp +
+> audio/pipeline.cpp + audio/dsp.cpp — a terminal-scope demo never wired to the ES8388)
+> was deleted then. Don't resurrect it.
 
 ### File layout
 
 ```
-main.cpp              — entry point, frame loop (Core 0)
+main.cpp              — THE product: ES8388 init, PIO/DMA I2S, dual-core IR, the Core 0
+                        foreground processing loop, UART command interface
 audio/
-  pipeline.cpp/h      — DMA callback, sine oscillator, shared buffers, semaphores
-  dsp.cpp             — FFTConvolver init + warm-up, Core 1 entry point
+  es8388.cpp/h        — ES8388 codec I2C init + register helpers (0x18/0x0D = 48 kHz)
+  dsp_chain.cpp/h     — configurable Param/Stage chain (in trim, 3-band EQ,
+                        comp/limiter/sustain, output) + presets + UART command parser
+  biquad.h            — RBJ biquad (HPF / peaking / low+high shelf) for the EQ
+  tuner.cpp/h         — YIN pitch detection (tuner mode)
   offline_test.cpp    — standalone IR test: processes embedded audio, streams WAV via UART
   samples/
-    IR_garrison-NT1-A-20260320_48k_2048_M.wav  — 2048-sample NT1-A acoustic IR, 48kHz
-    garrison-piezo-20260320.wav                 — 7.9 sec piezo recording, 48kHz
-    ir_array.h          — generated: IR as C float array (do not edit)
-    piezo_raw.bin       — generated: raw float32 samples for objcopy embedding
+    IR_{tanglewood,garrison}-NT1-A-...-48k_2048_M.wav — 48 kHz 2048-tap body IRs
+    ir_array_{tanglewood,garrison}.h — generated float arrays (do not edit); BOTH are
+                        #include'd (each in its own namespace) in main.cpp and are
+                        preset-switchable at runtime
 i2s/
-  i2s.c/h             — PIO I2S output driver, DMA ping-pong
-  i2s_out.pio         — PIO program: I2S bit-clocking
-lib/FFTConvolver/     — HiFi-LoFi FFTConvolver (Ooura FFT backend)
-  AudioFFT.cpp        — converted from double → float for speed
-tools/
-  gen_audio_arrays.py — converts WAV files → ir_array.h + piezo_raw.bin (run by CMake)
-  capture_wav.py      — host script: receives processed WAV from Pico over UART
-  requirements.txt    — pyserial (install into tools/.venv)
+  i2s.c/h             — PIO I2S output driver, DMA ping-pong; I2S_SAMPLE_RATE / block size
+  i2s_out.pio         — PIO: I2S output bit-clocking (Pico is master: BCLK/LRCLK/MCLK)
+  i2s_in_slave.pio    — PIO: I2S input, watches BCLK/LRCLK (ES8388 ADC DOUT → Pico)
+lib/FFTConvolver/     — HiFi-LoFi FFTConvolver + TwoStageFFTConvolver (head/tail), float
+tools/gen_audio_arrays.py — WAV → ir_array_<guitar>.h + piezo_raw.bin (run by CMake)
 openocd.cfg           — debug probe config
 ```
 
-### Dual-core flow
+### Dual-core flow (all in main.cpp)
 
-- **Core 0**: DMA IRQ fires every 256 samples (~5.8 ms). Fills DSP input from sine oscillator, signals Core 1 via `g_sem_input_ready`, reads Core 1 output via `g_sem_output_ready`, converts float→I2S int32.
-- **Core 1**: Waits on `g_sem_input_ready`, runs `FFTConvolver::process()`, releases `g_sem_output_ready`.
+- **Input DMA IRQ (Core 0)**: captures one 256-sample block of ES8388 ADC audio into a
+  double buffer, releases a semaphore. Kept light — NO processing in the IRQ (convolving
+  in the IRQ smeared the output; that's why it's in the foreground).
+- **Core 0 foreground loop**: waits on the block semaphore, runs the IR head convolution
+  (TwoStageFFTConvolver) + `dsp_chain_process()`, clips/converts to int32 into a
+  publish-indexed staging buffer the output DMA reads. Also polls UART (non-blocking) and
+  runs ~1 Hz diagnostics inline (continuous loop — no per-second processing gap).
+- **Core 1**: runs ONLY the IR tail FFT — waits on `s_sem_tail_do`, calls the convolver's
+  background tail process, releases `s_sem_tail_done` (pre-released once at init to avoid a
+  first-block deadlock).
+- **FPU Flush-to-Zero** is enabled on BOTH cores — denormals in the decaying IR tail
+  otherwise stall the FFT → dropped audio blocks.
 
 ### Key constants
 
 | Symbol | File | Value |
 |--------|------|-------|
-| `I2S_SAMPLE_RATE` | i2s/i2s.h | 48000 |
-| `I2S_BLOCK_SIZE` | i2s/i2s.h | 256 (= `DSP_BLOCK_SIZE`) |
-| `IR_LENGTH` | audio/dsp.cpp | 512 |
-| Core 1 stack | audio/dsp.cpp | 32 KB |
+| `I2S_SAMPLE_RATE` | i2s/i2s.h | **48000** — MUST match the ES8388 speed regs (0x18/0x0D) and the IR's own rate. 96 kHz double-speed silently ran the convolver at 2× budget (dropped blocks) and played the 48 kHz IR an octave high — see git log 2026-06-07. |
+| `I2S_BLOCK_SIZE` | i2s/i2s.h | 256 mono samples/block (~5.33 ms real-time budget) |
+| `IR_HEAD_BLOCK` / `IR_TAIL_BLOCK` | main.cpp | 64 / 512 (full 2048-tap IR; head on Core 0, tail on Core 1) |
+| Core 1 stack | main.cpp | 32 KB |
 
 ## Critical implementation details
 
 ### Float warm-up on Core 0 (legacy note — no longer required)
-On RP2040, the `pico_float` ROM used lazy `sf_table` patching that required a warm-up pass on Core 0. On RP2350 the hardware FPU makes this unnecessary, but `dsp_init()` still runs two warm-up `process()` calls (harmless) to pre-prime the OLA convolver state.
+On RP2040, the `pico_float` ROM used lazy `sf_table` patching that required a warm-up pass on Core 0. On RP2350 the hardware FPU makes this unnecessary, but `main()`'s convolver init still runs two warm-up `process()` calls (harmless) to pre-prime the OLA state.
 
 ### DMA/PIO hardware reset on boot
 After a watchdog or flash-triggered reset, DMA and PIO hardware can retain stale state from the bootrom USB stack.
@@ -89,20 +114,27 @@ rp2350.core1 configure -event gdb-attach {
 ### copy_to_ram
 `pico_set_binary_type(pico_tone_trixter copy_to_ram)` copies the entire binary to SRAM at boot. Eliminates XIP flash latency on Core 1. RP2350 has 520 KB SRAM so this is comfortable.
 
-## Diagnostics
+## UART control + diagnostics (115200, stdio UART)
 
-The frame loop (Core 0, every 400 ms) prints:
-```
-frame=N  blocks=N  cp=N  dma_irq=N
-```
+The product runs quiet (no periodic UART spam) and takes live commands; `help` lists
+them. Parsed in `dsp_chain.cpp` (+ `main.cpp` for tuner/meter/preset/ir):
 
-| Field | Meaning |
-|-------|---------|
-| `blocks` | Core 1 completed process() calls |
-| `cp` | Core 1 checkpoint (2=waiting sem, 10=reading buf idx, 11=in process(), 12=process() returned) |
-| `dma_irq` | DMA IRQ0 handler call count |
+- `<stage>.<param> <val>` — set a param, e.g. `eq.mid_gain 3.5`, `comp.ratio 4`, `in.level 0.30`
+- `<stage> on|off` — enable/bypass a stage (`in`, `eq`, `comp`, `out`)
+- `preset [name]` — list, or load one (`tanglewood-slide`, `default`, `garrison`) — **also switches IR**
+- `ir on|off` — IR bypass; `bypass on|off` — kill IR+EQ+comp (output level stays)
+- `tuner on|off` — YIN tuner mode (dry monitor; UART needle ~12/s)
+- `meter on|off` — live comp gain-reduction + input-level meter (~1/s)
+- `dump` — all stages + params + ranges; `stats` — counters
+- `stats` fields: `dropped` (foreground skipped a block), `proc`/`tail`/`uart`/`diag`/`gap` µs.
+  `gap ≈ proc` with no idle ⟹ CPU-saturated — that decomposition is how the 96 kHz
+  sample-rate bug was caught. Budget per block ≈ 5333 µs.
 
-At real-time: `blocks` ≈ `dma_irq` ≈ 172 per 400 ms.
+Sync-loss (ADC stuck on a constant) auto-dumps a register/history trace and pulses
+`CASCADE_TRIG_PIN` (GPIO 22) for scope triggering.
+
+Live-tuning command replies printf (a ~1-block blip per command) — fine while tuning,
+not while performing.
 
 ## Performance status
 
@@ -134,4 +166,4 @@ Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOU
 | 16 | I2S BCLK / ES8388 SCLK | RIGHT |
 | 17 | I2S LRCLK / ES8388 LRCLK (= BCLK + 1, PIO sideset) | RIGHT |
 | 21 | ES8388 MCLK (12.288 MHz, hardware CLK_GPOUT0, 100Ω series) | RIGHT |
-| 22 | CASCADE_TRIG_PIN (debug scope trigger, es8388_test only) | RIGHT |
+| 22 | CASCADE_TRIG_PIN (sync-loss scope trigger, debug) | RIGHT |
