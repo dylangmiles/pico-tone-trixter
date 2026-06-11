@@ -171,6 +171,7 @@ add_executable(pico_tone_trixter
     audio/dsp_chain.cpp
     audio/tuner.cpp
     audio/oled.cpp
+    audio/menu.cpp
     i2s/i2s.c
 )
 pico_generate_pio_header(pico_tone_trixter

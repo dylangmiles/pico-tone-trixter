@@ -50,6 +50,7 @@ namespace ir_gn {
 #include "audio/dsp_chain.h"
 #include "audio/tuner.h"
 #include "audio/oled.h"
+#include "audio/menu.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include <cstring>
@@ -218,6 +219,42 @@ static void enc_dbg_poll(void) {
     if (a != la || b != lb || s != ls) {
         printf("[enc] A=%d B=%d SW=%d\n", a, b, s);
         la = a; lb = b; ls = s;
+    }
+}
+
+// Quadrature decoder: returns +1 (CW) / -1 (CCW) per detent (4 valid transitions),
+// 0 otherwise. *clicked = debounced button press (falling edge, 200 ms lockout).
+static int enc_read(bool *clicked) {
+    static const int8_t QTAB[16] = { 0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0 };
+    static uint8_t prev = 0x3;      // rest = A=1, B=1
+    static int8_t  acc  = 0;
+    int step = 0;
+    uint8_t cur = (uint8_t)((gpio_get(ENC_A_PIN) << 1) | gpio_get(ENC_B_PIN));
+    if (cur != prev) {
+        acc += QTAB[(prev << 2) | cur];
+        prev = cur;
+        if (acc >= 4)       { acc = 0; step = +1; }
+        else if (acc <= -4) { acc = 0; step = -1; }
+    }
+    static bool     last_sw = true;
+    static uint32_t lock_sw = 0;
+    bool sw = gpio_get(ENC_SW_PIN);
+    uint32_t now = time_us_32();
+    *clicked = (last_sw && !sw && (now - lock_sw) > 200000u);
+    if (*clicked) lock_sw = now;
+    last_sw = sw;
+    return step;
+}
+
+// Drive the OLED menu from the encoder. The framebuffer flush is a ~20 ms I2C
+// transfer (a brief audio hiccup), so it only runs on an actual encoder event —
+// never while idle/playing.
+static void menu_poll(void) {
+    bool click;
+    int turn = enc_read(&click);
+    if ((turn != 0 || click) && menu_event(turn, click)) {
+        menu_render();
+        oled_flush();
     }
 }
 
@@ -856,6 +893,7 @@ int main() {
         } else {
             printf("OLED 0x3C: not found — check wiring / CS-DC-RES ties\n");
         }
+        menu_init();                // encoder menu (splash stays until the first turn/click)
         printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
     }
@@ -922,7 +960,8 @@ int main() {
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
         footswitch_poll();                         // tuner / bypass stomp switches
-        if (g_enc_dbg) enc_dbg_poll();             // encoder bring-up debug (when 'enc on')
+        if (g_enc_dbg) enc_dbg_poll();             // encoder raw debug (when 'enc on')
+        else           menu_poll();                // otherwise the encoder drives the OLED menu
         if (sem_acquire_timeout_ms(&s_sem_block_ready, 5)) {
             // g_proc_idx always points at the LATEST captured block, so if the input
             // IRQ advanced g_irq1_count by >1 since we last ran, the intervening
