@@ -185,6 +185,41 @@ static void tuner_print_uart(void) {
            r.name, r.octave, (double)r.freq_hz, bar, (double)r.cents, st);
 }
 
+// --- Bring-up debug helpers (I²C scan + encoder) ----------------------------
+// Encoder pins per the GPIO map: A=GP4, B=GP3, SW=GP2 (internal pull-ups). Used only
+// by the `enc` debug command for now; the real encoder driver/menu comes later.
+#define ENC_A_PIN  4
+#define ENC_B_PIN  3
+#define ENC_SW_PIN 2
+static volatile bool g_enc_dbg = false;
+
+// Scan I²C1 (the ES8388 + OLED bus) and print every ACKing address.
+static void i2c_scan_print(void) {
+    printf("I2C1 scan:");
+    int n = 0;
+    for (uint8_t a = 0x08; a <= 0x77; a++) {
+        uint8_t rx;
+        if (i2c_read_blocking(i2c1, a, &rx, 1, false) >= 0) { printf(" 0x%02X", a); n++; }
+    }
+    printf("  (%d found — expect 0x10 ES8388, 0x3C OLED)\n", n);
+}
+
+static void enc_dbg_init(void) {
+    gpio_init(ENC_A_PIN);  gpio_set_dir(ENC_A_PIN,  GPIO_IN); gpio_pull_up(ENC_A_PIN);
+    gpio_init(ENC_B_PIN);  gpio_set_dir(ENC_B_PIN,  GPIO_IN); gpio_pull_up(ENC_B_PIN);
+    gpio_init(ENC_SW_PIN); gpio_set_dir(ENC_SW_PIN, GPIO_IN); gpio_pull_up(ENC_SW_PIN);
+}
+
+// Print encoder A/B/SW on any change — turn/press to verify wiring (`enc on|off`).
+static void enc_dbg_poll(void) {
+    static int la = -1, lb = -1, ls = -1;
+    int a = gpio_get(ENC_A_PIN), b = gpio_get(ENC_B_PIN), s = gpio_get(ENC_SW_PIN);
+    if (a != la || b != lb || s != ls) {
+        printf("[enc] A=%d B=%d SW=%d\n", a, b, s);
+        la = a; lb = b; ls = s;
+    }
+}
+
 // Non-blocking UART command poll. Accumulates a line; on newline it dispatches to
 // the DSP chain (which now owns the IR on/off flag too). getchar_timeout_us(0) never
 // blocks, so polling between blocks can't drop audio the way a blocking printf would.
@@ -227,6 +262,9 @@ static void dsp_uart_poll(void) {
                            (unsigned long)g_max_proc_us, (unsigned long)g_max_tail_us,
                            (unsigned long)g_max_uart_us, (unsigned long)g_max_diag_us,
                            (unsigned long)g_max_gap_us);
+                else if (strcmp(line, "i2cscan") == 0) i2c_scan_print();
+                else if (strcmp(line, "enc on") == 0)  { g_enc_dbg = true;  printf("enc=on (turn/press to see A/B/SW)\n"); }
+                else if (strcmp(line, "enc off") == 0) { g_enc_dbg = false; printf("enc=off\n"); }
                 else if (!dsp_chain_command(line))
                     printf("? '%s' (try help)\n", line);
                 n = 0;
@@ -806,6 +844,7 @@ int main() {
         tuner_init((float)I2S_SAMPLE_RATE);
         dsp_chain_load_preset(0);   // boot = preset 0 (tanglewood-slide); IR already matches s_cur_ir
         footswitch_init();          // tuner / bypass footswitches (GPIO 18 / 19, pulled up)
+        enc_dbg_init();             // encoder pins (GP4/3/2) — for the `enc` bring-up debug
         printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
     }
@@ -872,6 +911,7 @@ int main() {
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
         footswitch_poll();                         // tuner / bypass stomp switches
+        if (g_enc_dbg) enc_dbg_poll();             // encoder bring-up debug (when 'enc on')
         if (sem_acquire_timeout_ms(&s_sem_block_ready, 5)) {
             // g_proc_idx always points at the LATEST captured block, so if the input
             // IRQ advanced g_irq1_count by >1 since we last ran, the intervening
