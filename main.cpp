@@ -49,6 +49,7 @@ namespace ir_gn {
 }
 #include "audio/dsp_chain.h"
 #include "audio/tuner.h"
+#include "audio/oled.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include <cstring>
@@ -845,6 +846,16 @@ int main() {
         dsp_chain_load_preset(0);   // boot = preset 0 (tanglewood-slide); IR already matches s_cur_ir
         footswitch_init();          // tuner / bypass footswitches (GPIO 18 / 19, pulled up)
         enc_dbg_init();             // encoder pins (GP4/3/2) — for the `enc` bring-up debug
+        if (oled_init()) {          // SH1106 splash (shares the ES8388 I2C bus @ 0x3C)
+            oled_text(0,  0, "Tone Trixter");
+            oled_text(0, 18, "preset:");
+            oled_text(0, 28, dsp_chain_preset_name(0));
+            oled_text(0, 50, "48 kHz IR ready");
+            oled_flush();
+            printf("OLED 0x3C: splash up\n");
+        } else {
+            printf("OLED 0x3C: not found — check wiring / CS-DC-RES ties\n");
+        }
         printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
     }
