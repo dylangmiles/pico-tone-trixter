@@ -902,11 +902,12 @@ int main() {
             last_proc_t = proc_t0;
             int b = g_proc_idx;
             if (g_tuner) {
-                // Tuner mode: estimate pitch from the dry input, monitor dry (skip the
-                // IR + chain so Core 0 has budget for YIN). The estimate every ~85 ms
-                // briefly stalls the passthrough — irrelevant while tuning.
+                // Tuner mode: estimate pitch from the input and MUTE the output (silent
+                // tuning, like a normal pedal tuner). IR + chain skipped so Core 0 has
+                // budget for YIN; the estimate every ~85 ms briefly stalls the loop —
+                // irrelevant while muted.
                 if (tuner_feed(s_dsp_in[b], I2S_BLOCK_SIZE)) tuner_print_uart();
-                __builtin_memcpy(s_dsp_out, s_dsp_in[b], sizeof(s_dsp_out));
+                __builtin_memset(s_dsp_out, 0, sizeof(s_dsp_out));   // silent while tuning
             } else {
                 if (dsp_chain_ir_enabled()) {      // IR stage on AND global bypass off
                     s_convolver.process(s_dsp_in[b], s_dsp_out, I2S_BLOCK_SIZE);
