@@ -236,6 +236,38 @@ static void dsp_uart_poll(void) {
         }
     }
 }
+
+// --- Footswitches -----------------------------------------------------------
+// Two soft (momentary SPST, normally-open) footswitches wired pin→GND, read with
+// the Pico's internal pull-ups: FSW_TUNER toggles tuner mode, FSW_BYPASS toggles
+// DSP bypass. Active-low; an UNCONNECTED pin floats HIGH (pulled up) = "released",
+// so this is safe to run before the switches are wired. Debounce = falling-edge
+// detect + 200 ms lockout. Pins are free GPIOs — change to match your wiring.
+#define FSW_TUNER_PIN   18
+#define FSW_BYPASS_PIN  19
+
+static void footswitch_init(void) {
+    gpio_init(FSW_TUNER_PIN);   gpio_set_dir(FSW_TUNER_PIN,  GPIO_IN);  gpio_pull_up(FSW_TUNER_PIN);
+    gpio_init(FSW_BYPASS_PIN);  gpio_set_dir(FSW_BYPASS_PIN, GPIO_IN);  gpio_pull_up(FSW_BYPASS_PIN);
+}
+
+static void footswitch_poll(void) {
+    static bool     last_t = true, last_b = true;   // pulled-up HIGH = released
+    static uint32_t lock_t = 0,    lock_b = 0;
+    uint32_t now = time_us_32();
+    bool t = gpio_get(FSW_TUNER_PIN);
+    if (last_t && !t && (now - lock_t) > 200000u) {   // press (falling edge) + 200 ms debounce
+        g_tuner = !g_tuner;  lock_t = now;
+        printf("[fsw] tuner=%s\n", g_tuner ? "on" : "off");
+    }
+    last_t = t;
+    bool b = gpio_get(FSW_BYPASS_PIN);
+    if (last_b && !b && (now - lock_b) > 200000u) {
+        g_dsp_bypass = !g_dsp_bypass;  lock_b = now;
+        printf("[fsw] bypass=%s\n", g_dsp_bypass ? "on" : "off");
+    }
+    last_b = b;
+}
 #endif
 
 #define MCLK_PIN        21
@@ -773,6 +805,7 @@ int main() {
         dsp_chain_init((float)I2S_SAMPLE_RATE, IR_OUTPUT_SCALE);
         tuner_init((float)I2S_SAMPLE_RATE);
         dsp_chain_load_preset(0);   // boot = preset 0 (tanglewood-slide); IR already matches s_cur_ir
+        footswitch_init();          // tuner / bypass footswitches (GPIO 18 / 19, pulled up)
         printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
     }
@@ -838,6 +871,7 @@ int main() {
         dsp_uart_poll();                           // non-blocking live-tuning over UART
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
+        footswitch_poll();                         // tuner / bypass stomp switches
         if (sem_acquire_timeout_ms(&s_sem_block_ready, 5)) {
             // g_proc_idx always points at the LATEST captured block, so if the input
             // IRQ advanced g_irq1_count by >1 since we last ran, the intervening

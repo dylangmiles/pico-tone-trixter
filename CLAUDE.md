@@ -167,3 +167,5 @@ Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOU
 | 17 | I2S LRCLK / ES8388 LRCLK (= BCLK + 1, PIO sideset) | RIGHT |
 | 21 | ES8388 MCLK (12.288 MHz, hardware CLK_GPOUT0, 100Ω series) | RIGHT |
 | 22 | CASCADE_TRIG_PIN (sync-loss scope trigger, debug) | RIGHT |
+| 18 | Footswitch — tuner toggle (active-low, internal pull-up) | (free) |
+| 19 | Footswitch — DSP bypass toggle (active-low, internal pull-up) | (free) |
