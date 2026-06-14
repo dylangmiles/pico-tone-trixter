@@ -194,6 +194,7 @@ static void tuner_print_uart(void) {
 #define ENC_B_PIN  3
 #define ENC_SW_PIN 2
 static volatile bool g_enc_dbg = false;
+static volatile bool g_fsw_dbg = false;   // raw footswitch wiring test (see fsw_dbg_poll)
 
 // Scan I²C1 (the ES8388 + OLED bus) and print every ACKing address.
 static void i2c_scan_print(void) {
@@ -303,6 +304,16 @@ static void dsp_uart_poll(void) {
                 else if (strcmp(line, "i2cscan") == 0) i2c_scan_print();
                 else if (strcmp(line, "enc on") == 0)  { g_enc_dbg = true;  printf("enc=on (turn/press to see A/B/SW)\n"); }
                 else if (strcmp(line, "enc off") == 0) { g_enc_dbg = false; printf("enc=off\n"); }
+                else if (strcmp(line, "fsw on") == 0)  { g_fsw_dbg = true;  printf("fsw=on (stomp to see GP18/GP19; no mode toggle)\n"); }
+                else if (strcmp(line, "fsw off") == 0) { g_fsw_dbg = false; printf("fsw=off\n"); }
+                else if (strcmp(line, "help") == 0) {
+                    // Bring-up / test commands live in main.cpp; DSP commands in the chain.
+                    printf("Bring-up / test:\n"
+                           "  i2cscan                 scan I2C1 (expect 0x10 ES8388, 0x3C OLED)\n"
+                           "  enc on|off              raw encoder A/B/SW on change (wiring test)\n"
+                           "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n");
+                    dsp_chain_command(line);               // then the DSP-command section
+                }
                 else if (!dsp_chain_command(line))
                     printf("? '%s' (try help)\n", line);
                 n = 0;
@@ -325,6 +336,18 @@ static void dsp_uart_poll(void) {
 static void footswitch_init(void) {
     gpio_init(FSW_TUNER_PIN);   gpio_set_dir(FSW_TUNER_PIN,  GPIO_IN);  gpio_pull_up(FSW_TUNER_PIN);
     gpio_init(FSW_BYPASS_PIN);  gpio_set_dir(FSW_BYPASS_PIN, GPIO_IN);  gpio_pull_up(FSW_BYPASS_PIN);
+}
+
+// Raw footswitch state on any change — stomp to verify wiring (`fsw on|off`).
+// Prints the live pin levels WITHOUT toggling tuner/bypass, so it's a clean wiring
+// test: a correctly-wired switch reads 1 (released) and drops to 0 while held.
+static void fsw_dbg_poll(void) {
+    static int lt = -1, lb = -1;
+    int t = gpio_get(FSW_TUNER_PIN), b = gpio_get(FSW_BYPASS_PIN);
+    if (t != lt || b != lb) {
+        printf("[fsw] GP18 tuner=%d  GP19 bypass=%d  (0 = pressed)\n", t, b);
+        lt = t; lb = b;
+    }
 }
 
 static void footswitch_poll(void) {
@@ -959,7 +982,8 @@ int main() {
         dsp_uart_poll();                           // non-blocking live-tuning over UART
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
-        footswitch_poll();                         // tuner / bypass stomp switches
+        if (g_fsw_dbg) fsw_dbg_poll();             // raw footswitch wiring test (when 'fsw on')
+        else           footswitch_poll();          // tuner / bypass stomp switches
         if (g_enc_dbg) enc_dbg_poll();             // encoder raw debug (when 'enc on')
         else           menu_poll();                // otherwise the encoder drives the OLED menu
         if (sem_acquire_timeout_ms(&s_sem_block_ready, 5)) {
