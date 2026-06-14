@@ -187,6 +187,36 @@ static void tuner_print_uart(void) {
            r.name, r.octave, (double)r.freq_hz, bar, (double)r.cents, st);
 }
 
+// Render the tuner onto the OLED: big note+octave, frequency, a centre-zero needle
+// bar (±50 cents), and FLAT/IN TUNE/SHARP. Only called in tuner mode where the audio
+// output is muted, so the ~20 ms flush costs nothing audible.
+static void tuner_draw_oled(void) {
+    TunerResult r = tuner_result();
+    oled_clear();
+    oled_text(0, 0, "TUNER");
+    if (!r.valid) {
+        oled_text(28, 30, "-- listening --");
+        oled_flush();
+        return;
+    }
+    char s[16];
+    snprintf(s, sizeof s, "%s%d", r.name, r.octave);
+    oled_text2x(48, 12, s);                                  // big note, e.g. "E2"
+    snprintf(s, sizeof s, "%.1f Hz", (double)r.freq_hz);
+    oled_text(40, 34, s);
+
+    int cx = 64 + (int)lroundf(r.cents * 1.2f);              // ±50c -> ±60 px about centre
+    if (cx < 4)   cx = 4;
+    if (cx > 123) cx = 123;
+    for (int x = 4; x <= 123; x++) oled_pixel(x, 50, true);  // baseline
+    for (int y = 46; y <= 54; y++) oled_pixel(64, y, true);  // centre (in-tune) tick
+    for (int y = 44; y <= 56; y++) { oled_pixel(cx, y, true); oled_pixel(cx - 1, y, true); }  // needle
+
+    const char *st = (r.cents > 5.0f) ? "SHARP" : (r.cents < -5.0f) ? "FLAT" : "IN TUNE";
+    oled_text(0, 56, st);
+    oled_flush();
+}
+
 // --- Bring-up debug helpers (I²C scan + encoder) ----------------------------
 // Encoder pins per the GPIO map: A=GP4, B=GP3, SW=GP2 (internal pull-ups). Used only
 // by the `enc` debug command for now; the real encoder driver/menu comes later.
@@ -1015,12 +1045,23 @@ int main() {
             }
             last_proc_t = proc_t0;
             int b = g_proc_idx;
+            // On entering/leaving tuner mode, repaint the OLED once: instant "TUNER"
+            // on entry (before the first ~85 ms estimate), menu restored on exit.
+            static bool was_tuner = false;
+            if (g_tuner != was_tuner) {
+                oled_clear();
+                if (g_tuner) oled_text(0, 0, "TUNER");
+                else         menu_render();
+                oled_flush();
+                was_tuner = g_tuner;
+            }
             if (g_tuner) {
                 // Tuner mode: estimate pitch from the input and MUTE the output (silent
                 // tuning, like a normal pedal tuner). IR + chain skipped so Core 0 has
                 // budget for YIN; the estimate every ~85 ms briefly stalls the loop —
-                // irrelevant while muted.
-                if (tuner_feed(s_dsp_in[b], I2S_BLOCK_SIZE)) tuner_print_uart();
+                // irrelevant while muted. OLED is repainted with each new estimate (the
+                // flush is free here since the output is silent anyway).
+                if (tuner_feed(s_dsp_in[b], I2S_BLOCK_SIZE)) { tuner_print_uart(); tuner_draw_oled(); }
                 __builtin_memset(s_dsp_out, 0, sizeof(s_dsp_out));   // silent while tuning
             } else {
                 if (dsp_chain_ir_enabled()) {      // IR stage on AND global bypass off

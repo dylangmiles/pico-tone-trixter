@@ -14,5 +14,6 @@ void oled_flush(void);                         // push the framebuffer to the pa
 void oled_pixel(int x, int y, bool on);
 void oled_text(int x, int y, const char *s);   // text, top-left pixel (x,y)
 void oled_text_inv(int x, int y, const char *s); // inverted (for a selected menu row)
+void oled_text2x(int x, int y, const char *s);   // 2× scale (12×16 cell), e.g. the tuner note
 
 #endif // TT_OLED_H

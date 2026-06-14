@@ -125,12 +125,20 @@ static void oled_cmds(const uint8_t *cmds, int n) {
 }
 
 bool oled_init(void) {
-    // Probe first — don't hang if the panel isn't there.
+    // RES is tied to VCC on this module (no GPIO reset line), so the panel relies on
+    // its internal power-on reset — which is slow/flaky on a soft VCC rise and can
+    // leave the controller showing garbage RAM. Two mitigations:
+    //   (1) settle delay before/after the config commands, and
+    //   (2) keep the display OFF through init, clear RAM, THEN turn it on — so the
+    //       panel never lights up showing uninitialised RAM ("a few dots" on boot).
+    sleep_ms(100);                 // let the panel's internal POR + charge pump settle
+
+    // Probe — don't hang if the panel isn't there.
     uint8_t rx;
     if (i2c_read_blocking(i2c1, OLED_ADDR, &rx, 1, false) < 0) return false;
 
     static const uint8_t init[] = {
-        0xAE,             // display off
+        0xAE,             // display OFF (stays off until RAM is cleared)
         0xD5, 0x80,       // clock divide / osc freq
         0xA8, 0x3F,       // multiplex ratio = 64
         0xD3, 0x00,       // display offset = 0
@@ -145,11 +153,15 @@ bool oled_init(void) {
         0x32,             // SH1106 pump voltage = 8.0 V
         0xA4,             // resume to RAM content
         0xA6,             // normal (non-inverted)
-        0xAF,             // display ON
-    };
+    };                    // NB: no 0xAF here — display turned on AFTER the clear below
     oled_cmds(init, sizeof(init));
+    sleep_ms(20);                  // DC-DC pump stabilise before first RAM write
+
     oled_clear();
-    oled_flush();
+    oled_flush();                  // RAM now blank...
+
+    static const uint8_t on = 0xAF;
+    oled_cmds(&on, 1);             // ...so the display lights up clean, never garbage
     return true;
 }
 
@@ -189,6 +201,23 @@ static void draw_char(int x, int y, char c, bool inv) {
 
 void oled_text(int x, int y, const char *s) {
     for (; *s; s++) { draw_char(x, y, *s, false); x += 6; }
+}
+
+// 2× scaled glyph: each font pixel drawn as a 2×2 block (12×16 cell). Set pixels only,
+// so it overlays cleanly. Used for the big tuner note.
+static void draw_char2x(int x, int y, char c) {
+    if (c < 0x20 || c > 0x7E) c = 0x20;
+    const uint8_t *g = FONT5x7[c - 0x20];
+    for (int col = 0; col < 5; col++)
+        for (int row = 0; row < 8; row++)
+            if ((g[col] >> row) & 1)
+                for (int dy = 0; dy < 2; dy++)
+                    for (int dx = 0; dx < 2; dx++)
+                        oled_pixel(x + col * 2 + dx, y + row * 2 + dy, true);
+}
+
+void oled_text2x(int x, int y, const char *s) {
+    for (; *s; s++) { draw_char2x(x, y, *s); x += 12; }
 }
 
 void oled_text_inv(int x, int y, const char *s) {
