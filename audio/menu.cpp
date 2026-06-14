@@ -2,20 +2,23 @@
 
 #include "audio/menu.h"
 #include "audio/dsp_chain.h"
+#include "audio/app_hooks.h"
 #include "audio/oled.h"
 
 #include <stdio.h>
 
-enum { M_STAGES, M_PARAMS, M_EDIT };
+enum { M_STAGES, M_PARAMS, M_EDIT, M_PRESET, M_IR };
 
 static int s_mode  = M_STAGES;
-static int s_sel   = 0;   // selected stage index (STAGES level)
+static int s_sel   = 0;   // selected row at the main level (0=Preset, 1=IR, 2+=stage)
 static int s_stage = 0;   // entered stage (PARAMS / EDIT levels)
 static int s_item  = 0;   // selected item in PARAMS: 0 = "< back", 1 = enable, 2+ = param[item-2]
+static int s_pick  = 0;   // selected entry in the PRESET / IR picker
 
-#define VIS_ROWS 7        // visible list rows below the title (8 text rows total, row 0 = title)
+#define N_SPECIAL 2       // main-level rows before the stages: Preset, IR
+#define VIS_ROWS  7       // visible list rows below the title (8 text rows total, row 0 = title)
 
-void menu_init(void) { s_mode = M_STAGES; s_sel = 0; s_stage = 0; s_item = 0; }
+void menu_init(void) { s_mode = M_STAGES; s_sel = 0; s_stage = 0; s_item = 0; s_pick = 0; }
 
 static void clamp(int *v, int n) { if (*v < 0) *v = 0; if (*v >= n) *v = n - 1; }
 
@@ -26,8 +29,27 @@ bool menu_event(int turn, bool click) {
     int nstage = dsp_chain_stage_count();
 
     if (s_mode == M_STAGES) {
-        if (turn) { s_sel += turn; clamp(&s_sel, nstage); }
-        if (click) { s_mode = M_PARAMS; s_stage = s_sel; s_item = 0; }
+        int n_top = N_SPECIAL + nstage;
+        if (turn) { s_sel += turn; clamp(&s_sel, n_top); }
+        if (click) {
+            if (s_sel == 0)      { s_mode = M_PRESET; s_pick = app_preset_current(); }
+            else if (s_sel == 1) { s_mode = M_IR;     s_pick = app_ir_current(); }
+            else                 { s_mode = M_PARAMS; s_stage = s_sel - N_SPECIAL; s_item = 0; }
+        }
+        return turn || click;
+    }
+
+    if (s_mode == M_PRESET) {                          // pick a preset (loads params + IR)
+        int n = app_preset_count();
+        if (turn) { s_pick += turn; clamp(&s_pick, n); }
+        if (click) { app_preset_load(s_pick); s_mode = M_STAGES; }
+        return turn || click;
+    }
+
+    if (s_mode == M_IR) {                              // change the IR for the current preset
+        int n = app_ir_count();
+        if (turn) { s_pick += turn; clamp(&s_pick, n); }
+        if (click) { app_ir_select(s_pick); s_mode = M_STAGES; }
         return turn || click;
     }
 
@@ -69,8 +91,21 @@ static int scroll_top(int sel, int n, int vis) {
 
 static void row(int i, int sel, const char *s) {
     int y = 8 + i * 8;
-    if (i + 0 == sel) oled_text_inv(0, y, s);   // (sel passed already window-relative)
-    else              oled_text(0, y, s);
+    if (i == sel) oled_text_inv(0, y, s);   // (sel passed already window-relative)
+    else          oled_text(0, y, s);
+}
+
+// Draw a single-column picker list (preset / IR), marking the active entry with '*'.
+static void picker(const char *title, int n, int sel,
+                   const char *(*name)(int), int active) {
+    oled_text(0, 0, title);
+    int top = scroll_top(sel, n, VIS_ROWS);
+    char line[24];
+    for (int i = 0; i < VIS_ROWS && top + i < n; i++) {
+        int it = top + i;
+        snprintf(line, sizeof line, "%-12s%s", name(it), it == active ? "*" : "");
+        row(i, sel - top, line);
+    }
 }
 
 void menu_render(void) {
@@ -78,14 +113,23 @@ void menu_render(void) {
     char line[24];
 
     if (s_mode == M_STAGES) {
-        oled_text(0, 0, "-- STAGES --");
-        int n = dsp_chain_stage_count();
-        int top = scroll_top(s_sel, n, VIS_ROWS);
-        for (int i = 0; i < VIS_ROWS && top + i < n; i++) {
-            Stage *st = dsp_chain_stage(top + i);
-            snprintf(line, sizeof line, "%-5s   %s", st->name, st->enabled ? "on" : "off");
+        oled_text(0, 0, "-- MAIN --");
+        int n_top = N_SPECIAL + dsp_chain_stage_count();
+        int top = scroll_top(s_sel, n_top, VIS_ROWS);
+        for (int i = 0; i < VIS_ROWS && top + i < n_top; i++) {
+            int it = top + i;
+            if (it == 0)      snprintf(line, sizeof line, "P: %s",  app_preset_name(app_preset_current()));
+            else if (it == 1) snprintf(line, sizeof line, "IR:%s",  app_ir_name(app_ir_current()));
+            else {
+                Stage *st = dsp_chain_stage(it - N_SPECIAL);
+                snprintf(line, sizeof line, "%-5s   %s", st->name, st->enabled ? "on" : "off");
+            }
             row(i, s_sel - top, line);
         }
+    } else if (s_mode == M_PRESET) {
+        picker("-- PRESET --", app_preset_count(), s_pick, app_preset_name, app_preset_current());
+    } else if (s_mode == M_IR) {
+        picker("-- IR --", app_ir_count(), s_pick, app_ir_name, app_ir_current());
     } else if (s_mode == M_PARAMS) {
         Stage *st = dsp_chain_stage(s_stage);
         snprintf(line, sizeof line, "-- %s --", st->name);

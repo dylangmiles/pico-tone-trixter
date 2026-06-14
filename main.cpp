@@ -51,6 +51,7 @@ namespace ir_gn {
 #include "audio/tuner.h"
 #include "audio/oled.h"
 #include "audio/menu.h"
+#include "audio/app_hooks.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include <cstring>
@@ -145,6 +146,26 @@ static const struct { const float *samples; uint32_t len; const char *name; } s_
 };
 static int          s_cur_ir     = 0;       // currently loaded IR (boot = tanglewood)
 static volatile int g_pending_ir = -1;      // preset requested an IR switch; foreground applies it safely
+static int          s_cur_preset = 0;       // last-loaded preset (boot = 0); for the menu indicator
+#define IR_TABLE_COUNT ((int)(sizeof(s_ir_table) / sizeof(s_ir_table[0])))
+
+// --- app_hooks.h: bridge the menu (audio/) to preset + IR state owned here ---------
+extern "C" {
+int         app_preset_count(void)   { return dsp_chain_preset_count(); }
+const char *app_preset_name(int i)   { return dsp_chain_preset_name(i); }
+int         app_preset_current(void) { return s_cur_preset; }
+void        app_preset_load(int i) {
+    int ir = dsp_chain_load_preset(i);                 // params apply now
+    if (ir >= 0 && ir != s_cur_ir) g_pending_ir = ir;  // IR switches safely in the fg
+    s_cur_preset = i;
+}
+int         app_ir_count(void)       { return IR_TABLE_COUNT; }
+const char *app_ir_name(int i)       { return (i >= 0 && i < IR_TABLE_COUNT) ? s_ir_table[i].name : "?"; }
+int         app_ir_current(void)     { return g_pending_ir >= 0 ? g_pending_ir : s_cur_ir; }
+void        app_ir_select(int i) {
+    if (i >= 0 && i < IR_TABLE_COUNT && i != s_cur_ir) g_pending_ir = i;  // keep preset params
+}
+}
 
 // 32 KB Core 1 stack — the tail FFT (1024-pt complex for a 512-sample block)
 // needs ~20-30 KB of stack. Mirrors audio/dsp.cpp.
@@ -314,10 +335,9 @@ static void dsp_uart_poll(void) {
                         int idx = dsp_chain_find_preset(arg);
                         if (idx < 0) { printf("? no preset '%s'\n", arg); }
                         else {
-                            int ir = dsp_chain_load_preset(idx);   // params apply now
-                            if (ir >= 0 && ir != s_cur_ir) g_pending_ir = ir;   // IR switches in the fg
+                            app_preset_load(idx);              // params now + safe IR switch + s_cur_preset
                             printf("preset '%s' loaded (IR %s)\n", dsp_chain_preset_name(idx),
-                                   s_ir_table[ir >= 0 ? ir : s_cur_ir].name);
+                                   s_ir_table[app_ir_current()].name);
                         }
                     }
                 }
@@ -1055,6 +1075,17 @@ int main() {
                 oled_flush();
                 was_tuner = g_tuner;
             }
+            // Bypass indicator: repaint on any bypass change (footswitch OR UART) while
+            // not tuning. One ~20 ms flush at the stomp is fine; it stays until the next
+            // encoder turn / tuner. So it's glanceable on stage.
+            static bool was_bypass = g_dsp_bypass;
+            if (!g_tuner && g_dsp_bypass != was_bypass) {
+                oled_clear();
+                if (g_dsp_bypass) { oled_text2x(16, 16, "BYPASS"); oled_text(40, 46, "DSP off"); }
+                else              { oled_text2x(22, 16, "ACTIVE"); oled_text(40, 46, "DSP on"); }
+                oled_flush();
+            }
+            was_bypass = g_dsp_bypass;
             if (g_tuner) {
                 // Tuner mode: estimate pitch from the input and MUTE the output (silent
                 // tuning, like a normal pedal tuner). IR + chain skipped so Core 0 has
