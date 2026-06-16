@@ -124,12 +124,12 @@ static void oled_cmds(const uint8_t *cmds, int n) {
     i2c_write_blocking(i2c1, OLED_ADDR, buf, n + 1, false);
 }
 
-// OLED hardware reset pin. The robust cure for flaky power-on init (garbage RAM, the
-// half-screen vertical offset) is a real RES pulse — but that needs the panel's RES wire
-// moved OFF VCC onto a free GPIO. Until that rewire is done, leave this at -1 and rely on
-// the software mitigations below (POR settle + double-send of the config). After moving
-// RES to a free pin (e.g. 20), set this to that GPIO number.
-#define OLED_RES_PIN  -1
+// OLED hardware reset pin. THE cure for flaky power-on init (garbage / vertical offset /
+// black screen) and the only way a software re-init can actually recover a latched panel.
+// Needs the panel's RES wire moved OFF VCC onto this free GPIO (GP20). Safe to leave set
+// even before the rewire: it just pulses an unconnected pin, and the POR settle still runs.
+// Set to -1 to disable entirely.
+#define OLED_RES_PIN  20
 
 static const uint8_t OLED_INIT[] = {
     0xAE,             // display OFF (stays off until RAM is cleared)
