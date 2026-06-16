@@ -238,6 +238,18 @@ static void tuner_draw_oled(void) {
     oled_flush();
 }
 
+// OLED re-init + diagnostic pattern (`oled` command). Borders on the very top and
+// bottom rows + TOP/BOT labels make any vertical offset/wrap instantly obvious — if the
+// init misaligns, the borders won't sit at the screen edges.
+static void oled_diag_pattern(void) {
+    oled_clear();
+    for (int x = 0; x < 128; x++) { oled_pixel(x, 0, true); oled_pixel(x, 63, true); }
+    oled_text(2, 4,  "OLED TOP");
+    oled_text(2, 28, "reinit ok");
+    oled_text(2, 52, "OLED BOT");
+    oled_flush();
+}
+
 // --- Bring-up debug helpers (I²C scan + encoder) ----------------------------
 // Encoder pins per the GPIO map: A=GP4, B=GP3, SW=GP2 (internal pull-ups). Used only
 // by the `enc` debug command for now; the real encoder driver/menu comes later.
@@ -356,12 +368,18 @@ static void dsp_uart_poll(void) {
                 else if (strcmp(line, "enc off") == 0) { g_enc_dbg = false; printf("enc=off\n"); }
                 else if (strcmp(line, "fsw on") == 0)  { g_fsw_dbg = true;  printf("fsw=on (stomp to see GP18/GP19; no mode toggle)\n"); }
                 else if (strcmp(line, "fsw off") == 0) { g_fsw_dbg = false; printf("fsw=off\n"); }
+                else if (strcmp(line, "oled") == 0) {
+                    bool ok = oled_init();                 // re-run init; retry a bad/offset boot live
+                    if (ok) oled_diag_pattern();
+                    printf("oled reinit: %s\n", ok ? "ok — TOP/BOT border pattern (check edges)" : "no ACK");
+                }
                 else if (strcmp(line, "help") == 0) {
                     // Bring-up / test commands live in main.cpp; DSP commands in the chain.
                     printf("Bring-up / test:\n"
                            "  i2cscan                 scan I2C1 (expect 0x10 ES8388, 0x3C OLED)\n"
                            "  enc on|off              raw encoder A/B/SW on change (wiring test)\n"
-                           "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n");
+                           "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n"
+                           "  oled                    re-init OLED + TOP/BOT border test pattern\n");
                     dsp_chain_command(line);               // then the DSP-command section
                 }
                 else if (!dsp_chain_command(line))

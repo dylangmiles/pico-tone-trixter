@@ -124,37 +124,56 @@ static void oled_cmds(const uint8_t *cmds, int n) {
     i2c_write_blocking(i2c1, OLED_ADDR, buf, n + 1, false);
 }
 
+// OLED hardware reset pin. The robust cure for flaky power-on init (garbage RAM, the
+// half-screen vertical offset) is a real RES pulse — but that needs the panel's RES wire
+// moved OFF VCC onto a free GPIO. Until that rewire is done, leave this at -1 and rely on
+// the software mitigations below (POR settle + double-send of the config). After moving
+// RES to a free pin (e.g. 20), set this to that GPIO number.
+#define OLED_RES_PIN  -1
+
+static const uint8_t OLED_INIT[] = {
+    0xAE,             // display OFF (stays off until RAM is cleared)
+    0xD5, 0x80,       // clock divide / osc freq
+    0xA8, 0x3F,       // multiplex ratio = 64
+    0xD3, 0x00,       // display offset = 0   <-- if this byte's arg is dropped, image shifts
+    0x40,             // start line = 0       <-- ditto: vertical offset symptom
+    0xAD, 0x8B,       // SH1106 DC-DC control: on
+    0xA1,             // segment remap (col 127 → SEG0)
+    0xC8,             // COM scan direction remapped
+    0xDA, 0x12,       // COM pins config
+    0x81, 0x80,       // contrast
+    0xD9, 0x22,       // pre-charge
+    0xDB, 0x35,       // VCOMH deselect
+    0x32,             // SH1106 pump voltage = 8.0 V
+    0xA4,             // resume to RAM content
+    0xA6,             // normal (non-inverted)
+};                    // NB: no 0xAF — display turned on AFTER the clear below
+
 bool oled_init(void) {
-    // RES is tied to VCC on this module (no GPIO reset line), so the panel relies on
-    // its internal power-on reset — which is slow/flaky on a soft VCC rise and can
-    // leave the controller showing garbage RAM. Two mitigations:
-    //   (1) settle delay before/after the config commands, and
-    //   (2) keep the display OFF through init, clear RAM, THEN turn it on — so the
-    //       panel never lights up showing uninitialised RAM ("a few dots" on boot).
-    sleep_ms(100);                 // let the panel's internal POR + charge pump settle
+#if OLED_RES_PIN >= 0
+    // Hardware reset: forces the SH1106 controller into a known state regardless of how
+    // VCC ramped. This is the real fix for the intermittent bad init + half-screen offset.
+    gpio_init(OLED_RES_PIN);
+    gpio_set_dir(OLED_RES_PIN, GPIO_OUT);
+    gpio_put(OLED_RES_PIN, 1); sleep_ms(1);
+    gpio_put(OLED_RES_PIN, 0); sleep_ms(10);   // assert reset (>= a few µs needed; 10 ms is ample)
+    gpio_put(OLED_RES_PIN, 1); sleep_ms(10);   // release, let the controller boot
+#else
+    // No reset line (RES tied to VCC): lean on the internal POR settle.
+    sleep_ms(120);
+#endif
 
     // Probe — don't hang if the panel isn't there.
     uint8_t rx;
     if (i2c_read_blocking(i2c1, OLED_ADDR, &rx, 1, false) < 0) return false;
 
-    static const uint8_t init[] = {
-        0xAE,             // display OFF (stays off until RAM is cleared)
-        0xD5, 0x80,       // clock divide / osc freq
-        0xA8, 0x3F,       // multiplex ratio = 64
-        0xD3, 0x00,       // display offset = 0
-        0x40,             // start line = 0
-        0xAD, 0x8B,       // SH1106 DC-DC control: on
-        0xA1,             // segment remap (col 127 → SEG0)
-        0xC8,             // COM scan direction remapped
-        0xDA, 0x12,       // COM pins config
-        0x81, 0x80,       // contrast
-        0xD9, 0x22,       // pre-charge
-        0xDB, 0x35,       // VCOMH deselect
-        0x32,             // SH1106 pump voltage = 8.0 V
-        0xA4,             // resume to RAM content
-        0xA6,             // normal (non-inverted)
-    };                    // NB: no 0xAF here — display turned on AFTER the clear below
-    oled_cmds(init, sizeof(init));
+    // Send the config TWICE (register writes are idempotent). Without a hardware reset,
+    // the first I2C burst right after power-up occasionally drops a byte — which misaligns
+    // the rest of the sequence and shows as a vertically offset image (splash starting
+    // half-way down / near the bottom). The second pass re-asserts the correct config.
+    oled_cmds(OLED_INIT, sizeof OLED_INIT);
+    sleep_ms(5);
+    oled_cmds(OLED_INIT, sizeof OLED_INIT);
     sleep_ms(20);                  // DC-DC pump stabilise before first RAM write
 
     oled_clear();
