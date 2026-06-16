@@ -152,20 +152,24 @@ static const uint8_t OLED_INIT[] = {
 bool oled_init(void) {
 #if OLED_RES_PIN >= 0
     // Hardware reset: forces the SH1106 controller into a known state regardless of how
-    // VCC ramped. This is the real fix for the intermittent bad init + half-screen offset.
+    // VCC ramped. THE fix for the intermittent bad init / black screen — and the only way
+    // a software re-init (double-push / `oled`) can actually recover a latched panel.
     gpio_init(OLED_RES_PIN);
     gpio_set_dir(OLED_RES_PIN, GPIO_OUT);
     gpio_put(OLED_RES_PIN, 1); sleep_ms(1);
     gpio_put(OLED_RES_PIN, 0); sleep_ms(10);   // assert reset (>= a few µs needed; 10 ms is ample)
-    gpio_put(OLED_RES_PIN, 1); sleep_ms(10);   // release, let the controller boot
-#else
-    // No reset line (RES tied to VCC): lean on the internal POR settle.
-    sleep_ms(120);
+    gpio_put(OLED_RES_PIN, 1);                 // release
 #endif
+    sleep_ms(120);                 // POR / charge-pump settle (always — harmless with HW reset too)
 
-    // Probe — don't hang if the panel isn't there.
+    // Probe with retries — a marginal-VCC panel can be slow to start ACKing after power.
+    // Give it up to ~8 tries (~160 ms) before declaring it absent.
     uint8_t rx;
-    if (i2c_read_blocking(i2c1, OLED_ADDR, &rx, 1, false) < 0) return false;
+    int tries = 0;
+    while (i2c_read_blocking(i2c1, OLED_ADDR, &rx, 1, false) < 0) {
+        if (++tries >= 8) return false;
+        sleep_ms(20);
+    }
 
     // Send the config TWICE (register writes are idempotent). Without a hardware reset,
     // the first I2C burst right after power-up occasionally drops a byte — which misaligns
