@@ -126,10 +126,10 @@ static void oled_cmds(const uint8_t *cmds, int n) {
 
 // OLED hardware reset pin. THE cure for flaky power-on init (garbage / vertical offset /
 // black screen) and the only way a software re-init can actually recover a latched panel.
-// Needs the panel's RES wire moved OFF VCC onto this free GPIO (GP20). Safe to leave set
-// even before the rewire: it just pulses an unconnected pin, and the POR settle still runs.
-// Set to -1 to disable entirely.
-#define OLED_RES_PIN  20
+// Needs the panel's RES wire moved OFF VCC onto this free GPIO (GP11 — left side, well
+// clear of the audio clocks on GP16/17/21). Safe to leave set even before the rewire: it
+// just pulses an unconnected pin, and the POR settle still runs. Set to -1 to disable.
+#define OLED_RES_PIN  11
 
 static const uint8_t OLED_INIT[] = {
     0xAE,             // display OFF (stays off until RAM is cleared)
