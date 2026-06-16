@@ -313,10 +313,30 @@ static int enc_read(bool *clicked) {
 // Drive the OLED menu from the encoder. The framebuffer flush is a ~20 ms I2C
 // transfer (a brief audio hiccup), so it only runs on an actual encoder event —
 // never while idle/playing.
+//
+// Recovery gesture: a DOUBLE-PUSH of the encoder button (two clicks within ~400 ms)
+// re-inits the OLED — the fix for a garbled / vertically-offset boot. Single clicks
+// still drive the menu instantly; the re-init (~150 ms blocking → brief audio dropout)
+// only fires on the second quick click, then repaints the current menu. Used when the
+// screen is bad — at which point you're not navigating anyway.
 static void menu_poll(void) {
     bool click;
     int turn = enc_read(&click);
-    if ((turn != 0 || click) && menu_event(turn, click)) {
+
+    static uint32_t last_click_us = 0;
+    bool reinit = false;
+    if (click) {
+        uint32_t now = time_us_32();
+        if (last_click_us && (now - last_click_us) < 400000u) { reinit = true; last_click_us = 0; }
+        else last_click_us = now;
+    }
+
+    bool changed = (turn != 0 || click) && menu_event(turn, click);
+    if (reinit) {
+        oled_init();                  // deliberate recovery — brief audio dropout is fine here
+        menu_render();
+        oled_flush();
+    } else if (changed) {
         menu_render();
         oled_flush();
     }
