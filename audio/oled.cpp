@@ -197,8 +197,10 @@ void oled_pixel(int x, int y, bool on) {
     if (on) *b |= m; else *b &= ~m;
 }
 
-void oled_flush(void) {
-    for (int page = 0; page < OLED_PAGES; page++) {
+void oled_flush_pages(int first_page, int last_page) {
+    if (first_page < 0) first_page = 0;
+    if (last_page > OLED_PAGES - 1) last_page = OLED_PAGES - 1;
+    for (int page = first_page; page <= last_page; page++) {
         uint8_t set[] = { (uint8_t)(0xB0 | page),
                           (uint8_t)(0x00 | (OLED_COLOFF & 0x0F)),
                           (uint8_t)(0x10 | (OLED_COLOFF >> 4)) };
@@ -208,6 +210,14 @@ void oled_flush(void) {
         memcpy(row + 1, &s_fb[page * OLED_W], OLED_W);
         i2c_write_blocking(i2c1, OLED_ADDR, row, sizeof(row), false);
     }
+}
+
+void oled_flush(void) { oled_flush_pages(0, OLED_PAGES - 1); }
+
+void oled_fill_rect(int x, int y, int w, int h, bool on) {
+    for (int yy = y; yy < y + h; yy++)
+        for (int xx = x; xx < x + w; xx++)
+            oled_pixel(xx, yy, on);
 }
 
 static void draw_char(int x, int y, char c, bool inv) {

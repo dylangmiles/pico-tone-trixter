@@ -189,6 +189,7 @@ static void tail_core1_entry(void) {
 extern volatile uint32_t g_irq1_count;
 static volatile uint32_t g_dropped_blocks = 0;   // foreground skipped a captured block
 static volatile bool     g_meter = false;        // live compressor gain-reduction print (~1/s)
+static volatile bool     g_gr_oled = false;      // live OLED gain-reduction meter (filming/bench; blips audio)
 static volatile bool     g_tuner = false;        // tuner mode: pitch-detect dry input, UART needle
 
 // Print one tuner line: note + cents + an ASCII needle ([:] = in tune, # = pitch).
@@ -236,6 +237,51 @@ static void tuner_draw_oled(void) {
     const char *st = (r.cents > 5.0f) ? "SHARP" : (r.cents < -5.0f) ? "FLAT" : "IN TUNE";
     oled_text(0, 56, st);
     oled_flush();
+}
+
+// The home / splash screen — shown at boot and whenever we leave a transient mode
+// (tuner exit, bypass toggle, GR-meter exit). The bottom line carries the bypass state,
+// so we no longer need a separate BYPASS/ACTIVE banner. One full ~180 ms flush is fine
+// here: these are one-off, user-initiated events, not the audio hot loop.
+static void show_splash(void) {
+    oled_clear();
+    oled_text(0,  0, "Tone Trixter");
+    oled_text(0, 18, "preset:");
+    oled_text(0, 28, app_preset_name(app_preset_current()));
+    oled_text(0, 50, g_dsp_bypass ? "-- BYPASS --" : "48 kHz IR ready");
+    oled_flush();
+}
+
+// Live OLED gain-reduction meter. FILMING / BENCH ONLY: the OLED flush blocks the Core 0
+// audio loop (I2C is held at 50 kHz to keep its edges out of the audio), so every repaint
+// drops a few blocks → audible blips. That's fine for filming the screen for B-roll (the
+// final cut uses the separately-recorded clean track) or bench dialing of the comp — but
+// DON'T leave it on while performing. Repaints only the meter band (pages 3-6); the caller
+// throttles to ~5 fps. `entering` blanks the screen + draws the header once.
+static void gr_meter_paint(bool entering) {
+    static float gr_disp = 0.0f;                 // smoothed reduction, dB (<= 0)
+    if (entering) {
+        oled_clear();
+        oled_text(0, 0, "GAIN REDUCTION");
+        oled_flush();
+        gr_disp = 0.0f;
+    }
+    float gr = dsp_chain_comp_gr_db();            // peak reduction since last read, <= 0 dB
+    if (gr < gr_disp) gr_disp = gr;              // fast attack (deeper reduction)
+    else              gr_disp += (gr - gr_disp) * 0.45f;   // slow release toward current
+    oled_fill_rect(0, 24, 128, 32, false);       // clear the band (pages 3-6)
+    char v[16];
+    snprintf(v, sizeof v, "%4.1f dB", (double)gr_disp);
+    oled_text(40, 24, v);
+    const int BX = 4, BY = 36, BW = 120, BH = 16;
+    for (int x = BX; x < BX + BW; x++) { oled_pixel(x, BY, true); oled_pixel(x, BY + BH - 1, true); }
+    for (int y = BY; y < BY + BH; y++) { oled_pixel(BX, y, true); oled_pixel(BX + BW - 1, y, true); }
+    float frac = (-gr_disp) / 24.0f;             // full scale = 24 dB of reduction
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    int fw = (int)(frac * (BW - 4));
+    if (fw > 0) oled_fill_rect(BX + 2, BY + 2, fw, BH - 4, true);
+    oled_flush_pages(3, 6);                       // partial flush: just the meter band
 }
 
 // OLED re-init + diagnostic pattern (`oled` command). Borders on the very top and
@@ -377,6 +423,8 @@ static void dsp_uart_poll(void) {
                 else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
                 else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }
                 else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
+                else if (strcmp(line, "gr on") == 0)  { g_gr_oled = true;  printf("gr=on (OLED gain-reduction meter — FILMING/BENCH ONLY; the OLED flush blips live audio)\n"); }
+                else if (strcmp(line, "gr off") == 0) { g_gr_oled = false; printf("gr=off\n"); }
                 else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
                            (unsigned long)g_irq1_count, (unsigned long)g_dropped_blocks,
@@ -399,7 +447,8 @@ static void dsp_uart_poll(void) {
                            "  i2cscan                 scan I2C1 (expect 0x10 ES8388, 0x3C OLED)\n"
                            "  enc on|off              raw encoder A/B/SW on change (wiring test)\n"
                            "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n"
-                           "  oled                    re-init OLED + TOP/BOT border test pattern\n");
+                           "  oled                    re-init OLED + TOP/BOT border test pattern\n"
+                           "  gr on|off               live OLED gain-reduction meter (filming/bench; blips audio)\n");
                     dsp_chain_command(line);               // then the DSP-command section
                 }
                 else if (!dsp_chain_command(line))
@@ -995,11 +1044,7 @@ int main() {
         footswitch_init();          // tuner / bypass footswitches (GPIO 18 / 19, pulled up)
         enc_dbg_init();             // encoder pins (GP4/3/2) — for the `enc` bring-up debug
         if (oled_init()) {          // SH1106 splash (shares the ES8388 I2C bus @ 0x3C)
-            oled_text(0,  0, "Tone Trixter");
-            oled_text(0, 18, "preset:");
-            oled_text(0, 28, dsp_chain_preset_name(0));
-            oled_text(0, 50, "48 kHz IR ready");
-            oled_flush();
+            show_splash();
             printf("OLED 0x3C: splash up\n");
         } else {
             printf("OLED 0x3C: not found — check wiring / CS-DC-RES ties\n");
@@ -1107,23 +1152,29 @@ int main() {
             // on entry (before the first ~85 ms estimate), menu restored on exit.
             static bool was_tuner = false;
             if (g_tuner != was_tuner) {
-                oled_clear();
-                if (g_tuner) oled_text(0, 0, "TUNER");
-                else         menu_render();
-                oled_flush();
+                if (g_tuner) { oled_clear(); oled_text(0, 0, "TUNER"); oled_flush(); }
+                else         show_splash();          // leave tuner -> home/splash
                 was_tuner = g_tuner;
             }
-            // Bypass indicator: repaint on any bypass change (footswitch OR UART) while
-            // not tuning. One ~20 ms flush at the stomp is fine; it stays until the next
-            // encoder turn / tuner. So it's glanceable on stage.
+            // Bypass toggle (footswitch OR UART): return to the splash/home screen rather
+            // than a dedicated BYPASS/ACTIVE banner — the splash's bottom line shows the
+            // state. One ~180 ms flush at the stomp is fine; it's a one-off event.
             static bool was_bypass = g_dsp_bypass;
-            if (!g_tuner && g_dsp_bypass != was_bypass) {
-                oled_clear();
-                if (g_dsp_bypass) { oled_text2x(16, 16, "BYPASS"); oled_text(40, 46, "DSP off"); }
-                else              { oled_text2x(22, 16, "ACTIVE"); oled_text(40, 46, "DSP on"); }
-                oled_flush();
-            }
+            if (!g_tuner && !g_gr_oled && g_dsp_bypass != was_bypass) show_splash();
             was_bypass = g_dsp_bypass;
+            // Live OLED gain-reduction meter (UART "gr on|off") — FILMING/BENCH ONLY; see
+            // gr_meter_paint(). Throttled to ~5 fps; the partial flush still blips audio.
+            static bool     was_gr  = false;
+            static uint32_t last_gr = 0;
+            if (g_gr_oled && !g_tuner) {
+                uint32_t now = time_us_32();
+                if (!was_gr)                                   { gr_meter_paint(true);  last_gr = now; }
+                else if ((uint32_t)(now - last_gr) >= 200000u) { gr_meter_paint(false); last_gr = now; }
+                was_gr = true;
+            } else if (was_gr) {
+                was_gr = false;
+                show_splash();                          // leave GR meter -> home/splash
+            }
             if (g_tuner) {
                 // Tuner mode: estimate pitch from the input and MUTE the output (silent
                 // tuning, like a normal pedal tuner). IR + chain skipped so Core 0 has

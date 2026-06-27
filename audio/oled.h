@@ -15,5 +15,10 @@ void oled_pixel(int x, int y, bool on);
 void oled_text(int x, int y, const char *s);   // text, top-left pixel (x,y)
 void oled_text_inv(int x, int y, const char *s); // inverted (for a selected menu row)
 void oled_text2x(int x, int y, const char *s);   // 2× scale (12×16 cell), e.g. the tuner note
+void oled_fill_rect(int x, int y, int w, int h, bool on);   // filled rectangle into the framebuffer
+// Flush only pages [first_page..last_page] (each page = 8 px rows). A cheap partial update:
+// the full oled_flush() is ~180 ms at the 50 kHz audio-safe I2C clock, so the live GR meter
+// repaints just its band. first_page/last_page are clamped to [0, 7].
+void oled_flush_pages(int first_page, int last_page);
 
 #endif // TT_OLED_H
