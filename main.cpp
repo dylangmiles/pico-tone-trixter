@@ -549,6 +549,31 @@ static void dsp_uart_poll(void) {
                         }
                     }
                 }
+                else if (strcmp(line, "ir") == 0 || strncmp(line, "ir ", 3) == 0) {
+                    const char *arg = line + 2;
+                    while (*arg == ' ') arg++;
+                    if (*arg == '\0') {                        // show current + list options
+                        printf("IR: '%s'%s\n  options:", s_ir_table[s_cur_ir].name,
+                               s_cur_ir == IR_NONE ? " (convolution off)" : "");
+                        for (int i = 0; i < s_ir_count; i++) printf(" %s", s_ir_table[i].name);
+                        printf("\n  usage: ir <name> | ir none | ir on\n");
+                    } else if (strcmp(arg, "on") == 0) {       // re-engage the last real IR
+                        int t = (s_cur_ir == IR_NONE) ? s_conv_ir : s_cur_ir;
+                        app_ir_select(t);
+                        printf("ir on -> %s\n", s_ir_table[t].name);
+                    } else {                                    // "none"/"off" or an IR name
+                        int idx = resolve_ir_index(arg);
+                        if (idx < 0) {
+                            printf("? no IR '%s'. options:", arg);
+                            for (int i = 0; i < s_ir_count; i++) printf(" %s", s_ir_table[i].name);
+                            printf("\n");
+                        } else {
+                            app_ir_select(idx);
+                            printf("ir -> %s%s\n", s_ir_table[idx].name,
+                                   idx == IR_NONE ? " (convolution off)" : "");
+                        }
+                    }
+                }
                 else if (strcmp(line, "tuner on") == 0)  { g_tuner = true;  printf("tuner=on (dry monitor; 'tuner off' to resume)\n"); }
                 else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
                 else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }

@@ -179,7 +179,8 @@ static void in_process(Stage *s, float *buf, int n) {
 // ---------------------------------------------------------------------------
 // Stage 0: IR — a flag-only stage. The actual 2048-tap convolution runs cross-core
 // in es8388_test.cpp BEFORE dsp_chain_process(), so process()/recompute() are no-ops
-// here; this entry exists so the IR shows in `dump`, toggles via `ir on|off`, and is
+// here; this entry exists so the IR shows in `dump`, is enabled/disabled by the host's
+// IR selection (the `ir <name|none>` command / preset, via dsp_chain_set_ir_enabled), and is
 // covered by global bypass uniformly with the rest. es8388_test reads its effective
 // state via dsp_chain_ir_enabled().
 static void ir_noop_recompute(Stage *s, float fs) { (void)s; (void)fs; }
@@ -346,7 +347,8 @@ static void chain_help(void) {
            "  preset [name]           list presets, or load one (switches IR too)\n"
            "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
            "  bypass on|off           kill IR+EQ+Dynamics (output level only)\n"
-           "  ir on|off               IR convolution on/off (independent of bypass)\n"
+           "  ir [name|none]          select IR: a name (tanglewood/garrison/an SD .wav), none=off,\n"
+           "                          on=re-engage; no arg shows current + lists options\n"
            "  tuner on|off            guitar tuner (UART needle; dry monitor)\n"
            "  meter on|off            live compressor gain-reduction readout (~1/s)\n"
            "  dump                    list all stages + params\n"
