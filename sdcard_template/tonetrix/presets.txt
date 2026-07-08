@@ -6,7 +6,10 @@
 #
 #   name:       preset name (shown on screen + selected by config boot_preset)
 #   ir:         WAV file in /tonetrix/ir/  (also matches a built-in IR name:
-#               "tanglewood" / "garrison"). Omit to keep the current IR.
+#               "tanglewood" / "garrison"). Use  ir: none  for a dry preset —
+#               that turns the whole convolution pipeline OFF. Omitting ir:
+#               keeps whatever IR is currently loaded.
+#   ir.on:      1/0 — force convolution on/off (rarely needed; ir: none does it)
 #   in.on  eq.on  comp.on  out.on   stage enables (1/0, on/off)
 #   in.level:   pre-comp input trim (tames the hot IR), ~0.0..1.0
 #   eq.lo:      [freq_Hz, gain_dB]           low shelf
@@ -20,6 +23,22 @@
 # power cycle.
 # =========================================================================
 
+# default — dry baseline: no IR, convolution off. Also the inheritance seed.
+name: default
+ir: none
+in.on: 1
+eq.on: 0
+comp.on: 1
+out.on: 1
+in.level: 0.30
+eq.lo: [120, 0.0]
+eq.mid: [700, 0.0, 1.0]
+eq.hi: [3500, 0.0]
+comp: [-20, 2.0, 20, 200, 3]
+out.level: 0.80
+
+---
+
 name: tanglewood-slide
 ir: tanglewood.wav
 in.on: 1
@@ -32,21 +51,6 @@ eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
 comp: [-16, 3.5, 22, 300, 6]
 out.level: 0.70
-
----
-
-name: default
-ir: tanglewood.wav
-in.on: 1
-eq.on: 0
-comp.on: 1
-out.on: 1
-in.level: 0.30
-eq.lo: [120, 0.0]
-eq.mid: [700, 0.0, 1.0]
-eq.hi: [3500, 0.0]
-comp: [-20, 2.0, 20, 200, 3]
-out.level: 0.80
 
 ---
 
