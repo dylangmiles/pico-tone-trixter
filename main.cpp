@@ -94,6 +94,19 @@ static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consec
 #define ENABLE_IR 1
 #endif
 
+// SD card (bit-bang SPI + FatFs) — product only; the codec bench (ENABLE_IR=0) omits the
+// FatFs sources/include path, so keep these out of that translation unit.
+#if ENABLE_IR
+#include "audio/sd_spi.h"
+#include "audio/wav_load.h"
+#include "audio/tt_store.h"
+#include <strings.h>          // strcasecmp
+#include <cctype>             // tolower
+extern "C" {                 // FatFs is a C library — keep C linkage in this C++ TU
+#include "ff.h"
+}
+#endif
+
 #if ENABLE_IR
 // Full IR via TwoStageFFTConvolver:
 //   - head (64-sample blocks) runs synchronously on Core 0 → low-latency direct sound
@@ -139,15 +152,73 @@ static float s_dsp_out[I2S_BLOCK_SIZE];
 static semaphore_t s_sem_block_ready;       // input IRQ → foreground: a block is captured
 static volatile int g_proc_idx = 0;         // which s_dsp_in buffer the fg should convolve
 
-// IR table — index matches the preset ir_id field in dsp_chain.cpp.
-static const struct { const float *samples; uint32_t len; const char *name; } s_ir_table[] = {
-    { ir_tw::ir_samples, ir_tw::ir_num_samples, "tanglewood" },
-    { ir_gn::ir_samples, ir_gn::ir_num_samples, "garrison"   },
+// IR table — index 0 is a synthetic "none" IR (convolution OFF); then the two embedded
+// IRs; then any /tonetrix/ir/*.wav scanned off the SD card (ir_scan_sd). Presets AND the
+// encoder IR picker index this one table, so "none" and SD IRs are all selectable like a
+// built-in. SD entries carry a path and are decoded into s_sd_ir_buf at switch time.
+#define SD_IR_MAX_TAPS 4096         // convolver scratch; >2048 fits Core 1's budget (bench-validated to 2048)
+#define MAX_SD_IR      8
+#define N_EMBED_IR     2            // real embedded IRs (tanglewood, garrison)
+#define IR_NONE        0            // table index of the "no IR / convolution off" entry
+#define IR_FIRST_REAL  1            // first real IR index (0 is "none")
+struct IrEntry {
+    const float *samples;   // embedded array; NULL for "none" and (until decoded) SD entries
+    uint32_t     len;
+    char         name[48];  // display / preset-match name
+    char         path[80];  // SD file path (SD entries only)
+    bool         is_sd;
 };
-static int          s_cur_ir     = 0;       // currently loaded IR (boot = tanglewood)
-static volatile int g_pending_ir = -1;      // preset requested an IR switch; foreground applies it safely
-static int          s_cur_preset = 0;       // last-loaded preset (boot = 0); for the menu indicator
-#define IR_TABLE_COUNT ((int)(sizeof(s_ir_table) / sizeof(s_ir_table[0])))
+static IrEntry s_ir_table[1 + N_EMBED_IR + MAX_SD_IR] = {
+    { NULL,              0,                     "none",       "", false },  // [0] convolution off
+    { ir_tw::ir_samples, ir_tw::ir_num_samples, "tanglewood", "", false },
+    { ir_gn::ir_samples, ir_gn::ir_num_samples, "garrison",   "", false },
+};
+static int          s_ir_count   = 1 + N_EMBED_IR;   // none + 2 embedded; grows with the SD scan
+static float        s_sd_ir_buf[SD_IR_MAX_TAPS];     // WAV decode scratch (convolver copies it in)
+static int          s_cur_ir     = IR_FIRST_REAL;    // SELECTED IR (0=none); boot seeds tanglewood
+static int          s_conv_ir    = IR_FIRST_REAL;    // which REAL IR is loaded in the convolver (never 0)
+static volatile int g_pending_ir = -1;               // an IR (re)selection was requested; fg applies it
+static int          s_cur_preset = 0;                // last-loaded preset (boot = 0); menu indicator
+#define IR_TABLE_COUNT s_ir_count
+
+// Case-insensitive name match, ignoring a trailing ".wav" on either side — so a preset
+// `ir: tanglewood.wav` matches embedded "tanglewood", and `ir: mycab.wav` matches the
+// scanned SD entry "mycab.wav".
+static bool ir_name_eq(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    if (la >= 4 && strcasecmp(a + la - 4, ".wav") == 0) la -= 4;
+    if (lb >= 4 && strcasecmp(b + lb - 4, ".wav") == 0) lb -= 4;
+    if (la != lb) return false;
+    for (size_t i = 0; i < la; i++)
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return false;
+    return true;
+}
+// Resolve a preset's IR ref to a table index. "none"/"off"/empty → IR_NONE (dry). Otherwise
+// SD entries win over embedded (card-first). -1 = unresolved (missing file / typo) ⇒ keep current.
+static int resolve_ir_index(const char *name) {
+    if (!name || !*name || strcasecmp(name, "none") == 0 || strcasecmp(name, "off") == 0) return IR_NONE;
+    for (int i = IR_FIRST_REAL; i < s_ir_count; i++) if ( s_ir_table[i].is_sd && ir_name_eq(s_ir_table[i].name, name)) return i;
+    for (int i = IR_FIRST_REAL; i < s_ir_count; i++) if (!s_ir_table[i].is_sd && ir_name_eq(s_ir_table[i].name, name)) return i;
+    return -1;
+}
+// Scan /tonetrix/ir for *.wav and (re)build the SD portion of the IR table. The "none" +
+// embedded entries [0..IR_FIRST_REAL+N_EMBED_IR) are kept; SD entries rebuilt each call.
+static void ir_scan_sd(void) {
+    s_ir_count = 1 + N_EMBED_IR;
+    DIR dir;
+    if (f_opendir(&dir, "/tonetrix/ir") != FR_OK) return;
+    FILINFO fno;
+    while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] && s_ir_count < 1 + N_EMBED_IR + MAX_SD_IR) {
+        if (fno.fattrib & AM_DIR) continue;
+        size_t l = strlen(fno.fname);
+        if (l < 5 || strcasecmp(fno.fname + l - 4, ".wav") != 0) continue;
+        IrEntry *e = &s_ir_table[s_ir_count++];
+        e->samples = NULL; e->len = 0; e->is_sd = true;
+        strncpy(e->name, fno.fname, sizeof e->name - 1); e->name[sizeof e->name - 1] = 0;
+        snprintf(e->path, sizeof e->path, "/tonetrix/ir/%s", fno.fname);
+    }
+    f_closedir(&dir);
+}
 
 // --- app_hooks.h: bridge the menu (audio/) to preset + IR state owned here ---------
 extern "C" {
@@ -155,15 +226,18 @@ int         app_preset_count(void)   { return dsp_chain_preset_count(); }
 const char *app_preset_name(int i)   { return dsp_chain_preset_name(i); }
 int         app_preset_current(void) { return s_cur_preset; }
 void        app_preset_load(int i) {
-    int ir = dsp_chain_load_preset(i);                 // params apply now
-    if (ir >= 0 && ir != s_cur_ir) g_pending_ir = ir;  // IR switches safely in the fg
+    if (dsp_chain_load_preset(i) != 0) return;             // in/eq/comp/out params apply now
+    int ir = resolve_ir_index(dsp_chain_preset_ir(i));     // IR_NONE / a real index / -1 (keep current)
+    if (ir < 0) { /* preset IR missing → keep whatever's selected */ }
+    else if (ir != s_cur_ir) g_pending_ir = ir;            // fg loads/decodes + sets convolution enable
+    else dsp_chain_set_ir_enabled(ir != IR_NONE);          // same selection → just correct the enable
     s_cur_preset = i;
 }
-int         app_ir_count(void)       { return IR_TABLE_COUNT; }
-const char *app_ir_name(int i)       { return (i >= 0 && i < IR_TABLE_COUNT) ? s_ir_table[i].name : "?"; }
+int         app_ir_count(void)       { return s_ir_count; }
+const char *app_ir_name(int i)       { return (i >= 0 && i < s_ir_count) ? s_ir_table[i].name : "?"; }
 int         app_ir_current(void)     { return g_pending_ir >= 0 ? g_pending_ir : s_cur_ir; }
 void        app_ir_select(int i) {
-    if (i >= 0 && i < IR_TABLE_COUNT && i != s_cur_ir) g_pending_ir = i;  // keep preset params
+    if (i >= 0 && i < s_ir_count && i != s_cur_ir) g_pending_ir = i;  // keep preset params
 }
 }
 
@@ -189,8 +263,14 @@ static void tail_core1_entry(void) {
 extern volatile uint32_t g_irq1_count;
 static volatile uint32_t g_dropped_blocks = 0;   // foreground skipped a captured block
 static volatile bool     g_meter = false;        // live compressor gain-reduction print (~1/s)
-static volatile bool     g_gr_oled = false;      // live OLED gain-reduction meter (filming/bench; blips audio)
+static volatile bool     g_gr_oled = false;      // show the live GR-meter band on the home screen (menu / 'gr on')
+static volatile bool     g_on_home = false;      // home/splash screen is the one currently displayed (not a menu)
 static volatile bool     g_tuner = false;        // tuner mode: pitch-detect dry input, UART needle
+
+// app_hooks.h: GR-meter band toggle (state owned here; the menu + UART 'gr on/off' drive it).
+// The foreground loop's home tick redraws/hides the band from g_gr_oled, so this is a plain setter.
+extern "C" bool app_gr_enabled(void)  { return g_gr_oled; }
+extern "C" void app_gr_set(bool on)   { g_gr_oled = on; }
 
 // Print one tuner line: note + cents + an ASCII needle ([:] = in tune, # = pitch).
 static void tuner_print_uart(void) {
@@ -239,49 +319,61 @@ static void tuner_draw_oled(void) {
     oled_flush();
 }
 
-// The home / splash screen — shown at boot and whenever we leave a transient mode
-// (tuner exit, bypass toggle, GR-meter exit). The bottom line carries the bypass state,
-// so we no longer need a separate BYPASS/ACTIVE banner. One full ~180 ms flush is fine
-// here: these are one-off, user-initiated events, not the audio hot loop.
-static void show_splash(void) {
-    oled_clear();
-    oled_text(0,  0, "Tone Trixter");
-    oled_text(0, 18, "preset:");
-    oled_text(0, 28, app_preset_name(app_preset_current()));
-    oled_text(0, 50, g_dsp_bypass ? "-- BYPASS --" : "48 kHz IR ready");
-    oled_flush();
-}
+// Home-screen GR-meter band lives on pages 5-7 (y 40-63). draw_home_gr_band() repaints
+// only these pages, so the static info above (pages 0-4) never flickers.
+#define HOME_GR_Y0      40
+#define HOME_GR_PAGE0   5
+#define HOME_GR_PAGE1   7
 
-// Live OLED gain-reduction meter. FILMING / BENCH ONLY: the OLED flush blocks the Core 0
-// audio loop (I2C is held at 50 kHz to keep its edges out of the audio), so every repaint
-// drops a few blocks → audible blips. That's fine for filming the screen for B-roll (the
-// final cut uses the separately-recorded clean track) or bench dialing of the comp — but
-// DON'T leave it on while performing. Repaints only the meter band (pages 3-6); the caller
-// throttles to ~5 fps. `entering` blanks the screen + draws the header once.
-static void gr_meter_paint(bool entering) {
-    static float gr_disp = 0.0f;                 // smoothed reduction, dB (<= 0)
-    if (entering) {
-        oled_clear();
-        oled_text(0, 0, "GAIN REDUCTION");
-        oled_flush();
-        gr_disp = 0.0f;
-    }
+// Draw the live gain-reduction band (label + bar) into the framebuffer. Does NOT flush.
+// Returns true if it actually repainted. `force` = always repaint (initial draw from
+// show_splash); otherwise repaints ONLY when the value/bar visibly changed since last time.
+// That change-gate is what silences the I2C bus when the meter is idle: with no signal the
+// GR sits at 0, so we stop flushing → no periodic bus activity → no crosstalk into the
+// analog input (the "jackhammer" heard when unplugged). Smoothed: fast attack, slow release.
+static bool draw_home_gr_band(bool force) {
+    static float gr_disp = 0.0f;                  // smoothed reduction, dB (<= 0)
+    static int   last_fw  = -1;                    // last drawn bar width
+    static int   last_v10 = 1 << 30;              // last drawn value (dB ×10)
     float gr = dsp_chain_comp_gr_db();            // peak reduction since last read, <= 0 dB
     if (gr < gr_disp) gr_disp = gr;              // fast attack (deeper reduction)
     else              gr_disp += (gr - gr_disp) * 0.45f;   // slow release toward current
-    oled_fill_rect(0, 24, 128, 32, false);       // clear the band (pages 3-6)
-    char v[16];
-    snprintf(v, sizeof v, "%4.1f dB", (double)gr_disp);
-    oled_text(40, 24, v);
-    const int BX = 4, BY = 36, BW = 120, BH = 16;
-    for (int x = BX; x < BX + BW; x++) { oled_pixel(x, BY, true); oled_pixel(x, BY + BH - 1, true); }
-    for (int y = BY; y < BY + BH; y++) { oled_pixel(BX, y, true); oled_pixel(BX + BW - 1, y, true); }
+    // Label + bar pushed toward the bottom for breathing room under the info block; bar is
+    // half-height (6 px) and left-aligned to x=0 so its left edge lines up with the text.
+    const int LBL_Y = 46;                        // "GR x.x dB" label row
+    const int BX = 0, BY = 56, BW = 120, BH = 6; // bar box (BX=0 aligns with the label above)
     float frac = (-gr_disp) / 24.0f;             // full scale = 24 dB of reduction
     if (frac < 0.0f) frac = 0.0f;
     if (frac > 1.0f) frac = 1.0f;
-    int fw = (int)(frac * (BW - 4));
-    if (fw > 0) oled_fill_rect(BX + 2, BY + 2, fw, BH - 4, true);
-    oled_flush_pages(3, 6);                       // partial flush: just the meter band
+    int fw  = (int)(frac * (BW - 2));
+    int v10 = (int)lroundf(gr_disp * 10.0f);
+    if (!force && fw == last_fw && v10 == last_v10) return false;   // nothing changed → no I2C
+    last_fw = fw; last_v10 = v10;
+    oled_fill_rect(0, HOME_GR_Y0, 128, 64 - HOME_GR_Y0, false);   // clear the band (pages 5-7)
+    char v[20];
+    snprintf(v, sizeof v, "GR %4.1f dB", (double)gr_disp);
+    oled_text(0, LBL_Y, v);
+    for (int x = BX; x < BX + BW; x++) { oled_pixel(x, BY, true); oled_pixel(x, BY + BH - 1, true); }
+    for (int y = BY; y < BY + BH; y++) { oled_pixel(BX, y, true); oled_pixel(BX + BW - 1, y, true); }
+    if (fw > 0) oled_fill_rect(BX + 1, BY + 1, fw, BH - 2, true);
+    return true;
+}
+
+// The home / splash screen — static info (title, preset, bypass state) up top, plus the
+// live GR-meter band at the bottom when enabled ('gr off' hides it). Shown at boot and
+// whenever we leave a transient mode (tuner exit, bypass toggle) or after a menu-idle
+// timeout. The full-frame flush is audio-safe (async DMA, serviced by the Core 0 loop) so
+// even the automatic idle-return never blips the audio. Marks us as "on home" so the live
+// meter tick knows it may repaint the band (and won't stomp a menu).
+static void show_splash(void) {
+    oled_clear();
+    oled_text(0,  0, "Tone Trixter");
+    oled_text(0, 16, "P: ");
+    oled_text(18, 16, app_preset_name(app_preset_current()));
+    oled_text(0, 30, g_dsp_bypass ? "-- BYPASS --" : "48 kHz IR ready");
+    if (g_gr_oled) draw_home_gr_band(true);       // force the initial band draw
+    oled_flush_async();
+    g_on_home = true;
 }
 
 // OLED re-init + diagnostic pattern (`oled` command). Borders on the very top and
@@ -356,37 +448,75 @@ static int enc_read(bool *clicked) {
     return step;
 }
 
-// Drive the OLED menu from the encoder. The framebuffer flush is a ~20 ms I2C
-// transfer (a brief audio hiccup), so it only runs on an actual encoder event —
-// never while idle/playing.
+// Drive the OLED menu from the encoder. The framebuffer flush is now DMA-backed and
+// non-blocking (oled_flush_async + oled_flush_service in the Core 0 loop), so navigation
+// repaints no longer hiccup the audio; it still only repaints on an actual encoder event.
+// (Manual OLED reinit, if a panel ever garbles, is the UART `oled` command — the old
+// double-click reinit gesture was retired now that the GP11 hardware RES keeps it stable.)
 //
-// Recovery gesture: a DOUBLE-PUSH of the encoder button (two clicks within ~400 ms)
-// re-inits the OLED — the fix for a garbled / vertically-offset boot. Single clicks
-// still drive the menu instantly; the re-init (~150 ms blocking → brief audio dropout)
-// only fires on the second quick click, then repaints the current menu. Used when the
-// screen is bad — at which point you're not navigating anyway.
+// After this long without an encoder event, drop out of the menu back to the home
+// screen so the live GR meter reappears while you play.
+#define HOME_IDLE_US  8000000u
+
 static void menu_poll(void) {
     bool click;
     int turn = enc_read(&click);
 
-    static uint32_t last_click_us = 0;
-    bool reinit = false;
-    if (click) {
-        uint32_t now = time_us_32();
-        if (last_click_us && (now - last_click_us) < 400000u) { reinit = true; last_click_us = 0; }
-        else last_click_us = now;
+    static uint32_t last_activity_us = 0;
+    if (turn != 0 || click) last_activity_us = time_us_32();
+
+    // On the home screen, a single encoder input OPENS the menu at "< back" — it doesn't act
+    // as a menu command. So a click on home enters the menu, and the next click (on the
+    // selected "< back") returns to home.
+    if (g_on_home) {
+        if (turn != 0 || click) {
+            menu_open();
+            menu_render();
+            oled_flush_async();
+            g_on_home = false;
+        }
+        return;
     }
 
     bool changed = (turn != 0 || click) && menu_event(turn, click);
-    if (reinit) {
-        oled_init();                  // deliberate recovery — brief audio dropout is fine here
-        menu_render();
-        oled_flush();
+    if (menu_take_home()) {
+        show_splash();                // "< back" at MAIN → return to the home screen
     } else if (changed) {
         menu_render();
-        oled_flush();
+        oled_flush_async();
+    } else if ((uint32_t)(time_us_32() - last_activity_us) > HOME_IDLE_US) {
+        show_splash();                // menu idle → return home so the live meter resumes
     }
 }
+
+#if ENABLE_IR
+// SD-card bring-up test (`sdtest`): init the card, mount FAT, list the root directory.
+// Proves the bit-bang SPI + FatFs stack on hardware before wiring SD into IR loading.
+// Blocking (fine — a deliberate bench command); reads glitch audio like any UART reply.
+static FATFS s_fatfs;                              // static so the mount persists after sd_test()
+static void sd_test(void) {
+    printf("sd: init...\n");
+    sd_set_verbose(true);                          // trace CMD0/CMD8/ACMD41 so we can see where it stops
+    if (!sd_init()) { printf("sd: no card / init failed — check CS/SCK/MISO/MOSI + 3V3 rail\n"); return; }
+    uint32_t sec = sd_sector_count();
+    printf("sd: card ok — %s, %lu sectors (~%lu MB)\n",
+           sd_is_sdhc() ? "SDHC/SDXC" : "SDSC", (unsigned long)sec, (unsigned long)(sec / 2048));
+    FRESULT fr = f_mount(&s_fatfs, "", 1);         // mount now (opt 1 = mount immediately)
+    if (fr != FR_OK) { printf("sd: f_mount failed (%d) — FAT32-formatted?\n", (int)fr); return; }
+    DIR dir;
+    FILINFO fno;
+    if ((fr = f_opendir(&dir, "/")) != FR_OK) { printf("sd: opendir failed (%d)\n", (int)fr); return; }
+    printf("sd: mounted. root dir:\n");
+    int n = 0;
+    while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0]) {
+        printf("  %-13s %8lu B%s\n", fno.fname, (unsigned long)fno.fsize,
+               (fno.fattrib & AM_DIR) ? "  <dir>" : "");
+        n++;
+    }
+    f_closedir(&dir);
+    printf("sd: %d entries. (8.3 names only — LFN off)\n", n);
+}
+#endif // ENABLE_IR
 
 // Non-blocking UART command poll. Accumulates a line; on newline it dispatches to
 // the DSP chain (which now owns the IR on/off flag too). getchar_timeout_us(0) never
@@ -423,8 +553,9 @@ static void dsp_uart_poll(void) {
                 else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
                 else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }
                 else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
-                else if (strcmp(line, "gr on") == 0)  { g_gr_oled = true;  printf("gr=on (OLED gain-reduction meter — FILMING/BENCH ONLY; the OLED flush blips live audio)\n"); }
-                else if (strcmp(line, "gr off") == 0) { g_gr_oled = false; printf("gr=off\n"); }
+                else if (strcmp(line, "gr on") == 0)  { g_gr_oled = true;  if (g_on_home && !g_tuner) show_splash(); printf("gr=on (home GR-meter band shown)\n"); }
+                else if (strcmp(line, "gr off") == 0) { g_gr_oled = false; if (g_on_home && !g_tuner) show_splash(); printf("gr=off (home GR-meter band hidden)\n"); }
+                else if (strcmp(line, "oleddma") == 0) oled_dma_selftest();   // DMA-flush diagnostic
                 else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
                            (unsigned long)g_irq1_count, (unsigned long)g_dropped_blocks,
@@ -432,6 +563,27 @@ static void dsp_uart_poll(void) {
                            (unsigned long)g_max_uart_us, (unsigned long)g_max_diag_us,
                            (unsigned long)g_max_gap_us);
                 else if (strcmp(line, "i2cscan") == 0) i2c_scan_print();
+#if ENABLE_IR
+                else if (strcmp(line, "sdtest") == 0)  sd_test();       // SD bring-up: init + mount + list root
+                else if (strcmp(line, "sdpins") == 0)  sd_pin_check();  // float/short test (disconnect module)
+                else if (strcmp(line, "sdcfg") == 0)   tt_store_dump(); // loaded on-card config/presets
+                else if (strcmp(line, "sdir") == 0) {                   // IR table (built-in + scanned SD WAVs)
+                    printf("IR table (%d):\n", s_ir_count);
+                    for (int i = 0; i < s_ir_count; i++)
+                        printf("  [%d]%c %-20s %s\n", i, i == s_cur_ir ? '*' : ' ', s_ir_table[i].name,
+                               i == IR_NONE ? "(convolution off)" : s_ir_table[i].is_sd ? s_ir_table[i].path : "(built-in)");
+                }
+                else if (strcmp(line, "sdreload") == 0) {               // re-mount + re-read card without a reboot
+                    if (sd_init() && f_mount(&s_fatfs, "", 1) == FR_OK) {
+                        ir_scan_sd();
+                        int n = 0;
+                        if (tt_store_load()) { const Preset *ps = tt_store_presets(&n); dsp_chain_install_presets(ps, n); }
+                        else                   dsp_chain_install_presets(NULL, 0);   // revert to built-ins
+                        printf("sdreload: %d preset%s, %d SD IR%s\n", n, n == 1 ? "" : "s",
+                               s_ir_count - N_EMBED_IR, (s_ir_count - N_EMBED_IR) == 1 ? "" : "s");
+                    } else printf("sdreload: no card / mount failed\n");
+                }
+#endif
                 else if (strcmp(line, "enc on") == 0)  { g_enc_dbg = true;  printf("enc=on (turn/press to see A/B/SW)\n"); }
                 else if (strcmp(line, "enc off") == 0) { g_enc_dbg = false; printf("enc=off\n"); }
                 else if (strcmp(line, "fsw on") == 0)  { g_fsw_dbg = true;  printf("fsw=on (stomp to see GP18/GP19; no mode toggle)\n"); }
@@ -448,7 +600,16 @@ static void dsp_uart_poll(void) {
                            "  enc on|off              raw encoder A/B/SW on change (wiring test)\n"
                            "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n"
                            "  oled                    re-init OLED + TOP/BOT border test pattern\n"
+                           "  oleddma                 async OLED DMA-flush self-test\n"
                            "  gr on|off               live OLED gain-reduction meter (filming/bench; blips audio)\n");
+#if ENABLE_IR
+                    printf("SD card (/tonetrix on the card):\n"
+                           "  sdtest                  init + mount + list root dir\n"
+                           "  sdpins                  GP6/8/9/10 float/short test (disconnect module first)\n"
+                           "  sdcfg                   show on-card config + presets that were loaded\n"
+                           "  sdir                    list IR table (built-in + scanned SD WAVs; * = current)\n"
+                           "  sdreload                re-read the card after editing (no reboot)\n");
+#endif
                     dsp_chain_command(line);               // then the DSP-command section
                 }
                 else if (!dsp_chain_command(line))
@@ -1040,7 +1201,36 @@ int main() {
         // at IR_OUTPUT_SCALE so boot audio is unchanged until a stage is enabled.
         dsp_chain_init((float)I2S_SAMPLE_RATE, IR_OUTPUT_SCALE);
         tuner_init((float)I2S_SAMPLE_RATE);
-        dsp_chain_load_preset(0);   // boot = preset 0 (tanglewood-slide); IR already matches s_cur_ir
+        app_preset_load(0);         // pre-seed preset 0 = "default": params + selects IR "none"
+                                    // (convolution off). Applied on the first fg block. SD
+                                    // config's boot_preset overrides below. No card ⇒ boots dry.
+
+        // --- SD card: on-card presets / IRs override the built-ins (silent fallback) ---
+        // If /tonetrix/{config,presets}.txt are present they replace the built-in list;
+        // /tonetrix/ir/*.wav are scanned into the IR table. No card / no folder → the
+        // built-ins above stand unchanged. Deferred to the fg loop: the boot preset's IR
+        // switch (g_pending_ir) applies on the first block, like any preset change.
+        if (sd_init() && f_mount(&s_fatfs, "", 1) == FR_OK) {
+            ir_scan_sd();                                  // /tonetrix/ir/*.wav → IR table
+            if (tt_store_load()) {
+                int n = 0; const Preset *ps = tt_store_presets(&n);
+                if (ps) dsp_chain_install_presets(ps, n);
+                bool grset = false, gr = tt_store_gr_meter(&grset);
+                if (grset) g_gr_oled = gr;                 // home GR-band default from config
+                const char *bp = tt_store_boot_preset();
+                int bi = (bp && bp[0]) ? dsp_chain_find_preset(bp) : 0;
+                if (bi < 0) { printf("sd: boot_preset '%s' not found — using first\n", bp); bi = 0; }
+                app_preset_load(bi);                       // params now + safe IR switch
+                printf("sd: on-card config loaded — %d preset%s, %d SD IR%s, boot '%s'\n",
+                       n, n == 1 ? "" : "s", s_ir_count - N_EMBED_IR,
+                       (s_ir_count - N_EMBED_IR) == 1 ? "" : "s", dsp_chain_preset_name(bi));
+            } else {
+                printf("sd: card present, no /tonetrix config — using built-in presets\n");
+            }
+        } else {
+            printf("sd: no card / mount failed — using built-in presets\n");
+        }
+
         footswitch_init();          // tuner / bypass footswitches (GPIO 18 / 19, pulled up)
         enc_dbg_init();             // encoder pins (GP4/3/2) — for the `enc` bring-up debug
         if (oled_init()) {          // SH1106 splash (shares the ES8388 I2C bus @ 0x3C)
@@ -1104,6 +1294,7 @@ int main() {
     uint32_t last_proc_t  = 0;              // gap-between-services timer baseline
     while (true) {
 #if ENABLE_IR
+        oled_flush_service();   // advance any in-flight audio-safe OLED flush (non-blocking)
         // CONTINUOUS foreground processing — never stop refilling staging. The
         // input IRQ only captures blocks (kept light so it can't delay output DMA);
         // here we convolve + run the DSP chain + clip into the non-published
@@ -1133,11 +1324,41 @@ int main() {
             // process() expects. A brief glitch on switch is fine — it's a deliberate
             // user action. Done OUTSIDE the proc timer below.
             if (g_pending_ir >= 0) {
-                sem_acquire_blocking(&s_sem_tail_done);
-                s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK,
-                                 s_ir_table[g_pending_ir].samples, s_ir_table[g_pending_ir].len);
-                sem_release(&s_sem_tail_done);
-                s_cur_ir = g_pending_ir;
+                int t = g_pending_ir;
+                if (t == IR_NONE) {                       // select "none" → convolution off
+                    dsp_chain_set_ir_enabled(false);      // (convolver keeps its last real IR loaded)
+                    s_cur_ir = IR_NONE;
+                } else if (t == s_conv_ir) {              // this real IR is already loaded → just enable
+                    dsp_chain_set_ir_enabled(true);
+                    s_cur_ir = t;
+                } else {                                  // load/decode a different real IR
+                    IrEntry *e = &s_ir_table[t];
+                    const float *samp = e->samples;
+                    uint32_t     len  = e->len;
+                    if (e->is_sd) {                       // decode the WAV now (blocking SD read — a
+                        uint32_t rate = 0, avail = 0;     // deliberate switch; glitches like any IR change)
+                        int nsmp = wav_load_mono_f32(e->path, s_sd_ir_buf, SD_IR_MAX_TAPS, &rate, &avail);
+                        if (nsmp > 0) {
+                            samp = s_sd_ir_buf; len = (uint32_t)nsmp;
+                            if (rate && rate != (uint32_t)I2S_SAMPLE_RATE)
+                                printf("ir: WARN %s is %lu Hz (expected %d) — pitch/length will be off\n",
+                                       e->name, (unsigned long)rate, I2S_SAMPLE_RATE);
+                            if (avail > (uint32_t)SD_IR_MAX_TAPS)
+                                printf("ir: WARN %s has %lu taps, truncated to %d\n",
+                                       e->name, (unsigned long)avail, SD_IR_MAX_TAPS);
+                        } else {
+                            printf("ir: load '%s' failed (%s) — keeping current IR\n", e->path, wav_err_str(nsmp));
+                            samp = NULL;
+                        }
+                    }
+                    if (samp) {
+                        sem_acquire_blocking(&s_sem_tail_done);
+                        s_convolver.init(IR_HEAD_BLOCK, IR_TAIL_BLOCK, samp, len);
+                        sem_release(&s_sem_tail_done);
+                        s_conv_ir = t; s_cur_ir = t;
+                        dsp_chain_set_ir_enabled(true);
+                    }
+                }
                 g_pending_ir = -1;
             }
 
@@ -1149,31 +1370,34 @@ int main() {
             last_proc_t = proc_t0;
             int b = g_proc_idx;
             // On entering/leaving tuner mode, repaint the OLED once: instant "TUNER"
-            // on entry (before the first ~85 ms estimate), menu restored on exit.
+            // on entry (before the first ~85 ms estimate), home restored on exit.
             static bool was_tuner = false;
             if (g_tuner != was_tuner) {
-                if (g_tuner) { oled_clear(); oled_text(0, 0, "TUNER"); oled_flush(); }
-                else         show_splash();          // leave tuner -> home/splash
+                if (g_tuner) { oled_clear(); oled_text(0, 0, "TUNER"); oled_flush(); g_on_home = false; }
+                else         show_splash();          // leave tuner -> home (sets g_on_home)
                 was_tuner = g_tuner;
             }
-            // Bypass toggle (footswitch OR UART): return to the splash/home screen rather
-            // than a dedicated BYPASS/ACTIVE banner — the splash's bottom line shows the
-            // state. One ~180 ms flush at the stomp is fine; it's a one-off event.
+            // Bypass toggle (footswitch OR UART): refresh the home screen's state line so
+            // it shows BYPASS/ready. Only if we're on the home screen (not mid-menu). One
+            // ~180 ms flush at the stomp is fine; it's a one-off event.
             static bool was_bypass = g_dsp_bypass;
-            if (!g_tuner && !g_gr_oled && g_dsp_bypass != was_bypass) show_splash();
-            was_bypass = g_dsp_bypass;
-            // Live OLED gain-reduction meter (UART "gr on|off") — FILMING/BENCH ONLY; see
-            // gr_meter_paint(). Throttled to ~5 fps; the partial flush still blips audio.
-            static bool     was_gr  = false;
+            if (g_dsp_bypass != was_bypass) {
+                if (!g_tuner && g_on_home) show_splash();
+                was_bypass = g_dsp_bypass;
+            }
+            // Live home-screen GR-meter band: repaint just its pages (5-7) ~5 fps while the
+            // home screen is up and the meter is enabled ('gr off' hides it). Audio-safe —
+            // the partial flush DMAs in the background. Suppressed in menus/tuner.
             static uint32_t last_gr = 0;
-            if (g_gr_oled && !g_tuner) {
+            if (g_on_home && g_gr_oled && !g_tuner) {
                 uint32_t now = time_us_32();
-                if (!was_gr)                                   { gr_meter_paint(true);  last_gr = now; }
-                else if ((uint32_t)(now - last_gr) >= 200000u) { gr_meter_paint(false); last_gr = now; }
-                was_gr = true;
-            } else if (was_gr) {
-                was_gr = false;
-                show_splash();                          // leave GR meter -> home/splash
+                if ((uint32_t)(now - last_gr) >= 200000u) {
+                    last_gr = now;
+                    // Only flush (touch the I2C bus) when the band actually changed — no
+                    // signal → no change → no bus activity → no crosstalk when unplugged.
+                    if (draw_home_gr_band(false))
+                        oled_flush_pages_async(HOME_GR_PAGE0, HOME_GR_PAGE1);
+                }
             }
             if (g_tuner) {
                 // Tuner mode: estimate pitch from the input and MUTE the output (silent

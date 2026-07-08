@@ -54,7 +54,14 @@ audio/
     IR_{tanglewood,garrison}-NT1-A-...-48k_2048_M.wav — 48 kHz 2048-tap body IRs
     ir_array_{tanglewood,garrison}.h — generated float arrays (do not edit); BOTH are
                         #include'd (each in its own namespace) in main.cpp and are
-                        preset-switchable at runtime
+                        preset-switchable at runtime (the built-in / fallback IRs)
+  sd_spi.c/h          — bit-bang SD SPI (GP6/8/9/10); read-only 512-byte sectors
+  sd_diskio.c         — FatFs disk-I/O glue → sd_spi
+  wav_load.c/h        — on-device WAV → mono float32 (mirrors gen_audio_arrays.py math)
+  tt_store.cpp/h      — parse /tonetrix/{config,presets}.txt (flow-YAML) off the card
+lib/fatfs/            — FatFs R0.15 (ff.c + ffunicode.c for LFN), read-only, CP437
+sdcard_template/      — drag /tonetrix/ onto a card: config.txt + presets.txt (= the 3
+                        built-ins) + ir/*.wav. Seeds a card with the current defaults.
 i2s/
   i2s.c/h             — PIO I2S output driver, DMA ping-pong; I2S_SAMPLE_RATE / block size
   i2s_out.pio         — PIO: I2S output bit-clocking (Pico is master: BCLK/LRCLK/MCLK)
@@ -114,6 +121,38 @@ rp2350.core1 configure -event gdb-attach {
 ### copy_to_ram
 `pico_set_binary_type(pico_tone_trixter copy_to_ram)` copies the entire binary to SRAM at boot. Eliminates XIP flash latency on Core 1. RP2350 has 520 KB SRAM so this is comfortable.
 
+## SD card: on-card presets + IRs (audio/tt_store, wav_load)
+
+At boot, if the card mounts and `/tonetrix/` exists, its config **overrides** the
+built-ins; absent card/folder → built-ins stand (silent fallback). It's all-or-nothing
+at the file level.
+
+- `/tonetrix/presets.txt` (≥1 valid preset) **replaces** the built-in preset list via
+  `dsp_chain_install_presets()`. Unspecified keys in a preset inherit the built-in
+  `default` (`dsp_chain_default_preset()`), so partial presets work.
+- `/tonetrix/config.txt` → `boot_preset` (loaded at power-on) + `gr_meter` default.
+- IR selection includes a synthetic **"none" IR at `s_ir_table[0]`** (`IR_NONE`): selecting
+  it turns the convolution stage OFF (the convolver keeps its last real IR loaded but
+  bypassed). `main.cpp` tracks `s_cur_ir` (the SELECTED entry, 0=none) vs `s_conv_ir` (the
+  real IR actually loaded). A preset's `ir: none`/empty resolves to `IR_NONE`; `ir: <name>`
+  selects a real IR and enables convolution (`dsp_chain_set_ir_enabled`). So the display and
+  the encoder IR picker both show "none" when dry. The built-in `default` preset is dry
+  (ir none) and is preset index 0 / the boot default when no card overrides it.
+- `/tonetrix/ir/*.wav` are scanned (`ir_scan_sd`) and appended to `s_ir_table` after the
+  two embedded IRs, so presets (`ir:` field) and the encoder IR picker index one table.
+  A preset's `ir:` resolves **card-first** (SD file wins over an embedded name of the
+  same base), matched case-insensitively ignoring `.wav`.
+- Format is **flow-style YAML** (flat `key: value`, inline `[a,b,c]` lists, `---` between
+  presets, `#` comments) — valid YAML but no significant indentation. Parser in
+  `tt_store.cpp`; host-tested to decode byte-identically to the embedded arrays.
+- FatFs LFN is **on** (`FF_USE_LFN=1`, needs `lib/fatfs/ffunicode.c`) so real filenames
+  open — with LFN off, `tanglewood.wav` mangles to an unpredictable `TANGLE~1.WAV`.
+- **Known limitation**: an SD-IR switch decodes the WAV (blocking bit-bang SD read)
+  *inside* the Core 0 foreground safe-switch point — a multi-hundred-ms audio dropout on
+  that one switch (embedded-IR switches are instant). Fine at boot / deliberate change;
+  move the decode off the audio path if it needs to be seamless. Steady-state audio and
+  the embedded path are unaffected.
+
 ## UART control + diagnostics (115200, stdio UART)
 
 The product runs quiet (no periodic UART spam) and takes live commands; `help` lists
@@ -121,11 +160,15 @@ them. Parsed in `dsp_chain.cpp` (+ `main.cpp` for tuner/meter/preset/ir):
 
 - `<stage>.<param> <val>` — set a param, e.g. `eq.mid_gain 3.5`, `comp.ratio 4`, `in.level 0.30`
 - `<stage> on|off` — enable/bypass a stage (`in`, `eq`, `comp`, `out`)
-- `preset [name]` — list, or load one (`tanglewood-slide`, `default`, `garrison`) — **also switches IR**
+- `preset [name]` — list, or load one (`default`, `tanglewood-slide`, `garrison`) — **also
+  switches IR**. `default` is the dry baseline (no IR, convolution off) and is the boot preset.
 - `ir on|off` — IR bypass; `bypass on|off` — kill IR+EQ+comp (output level stays)
 - `tuner on|off` — YIN tuner mode (dry monitor; UART needle ~12/s)
 - `meter on|off` — live comp gain-reduction + input-level meter (~1/s)
 - `dump` — all stages + params + ranges; `stats` — counters
+- `sdtest` / `sdpins` — SD bring-up (init+mount+list) / pin float-short test
+- `sdcfg` — show on-card config/presets that were loaded; `sdir` — IR table (built-in +
+  scanned SD WAVs, `*` = current); `sdreload` — re-read the card after editing (no reboot)
 - `stats` fields: `dropped` (foreground skipped a block), `proc`/`tail`/`uart`/`diag`/`gap` µs.
   `gap ≈ proc` with no idle ⟹ CPU-saturated — that decomposition is how the 96 kHz
   sample-rate bug was caught. Budget per block ≈ 5333 µs.

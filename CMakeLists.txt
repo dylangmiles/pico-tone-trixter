@@ -172,6 +172,12 @@ add_executable(pico_tone_trixter
     audio/tuner.cpp
     audio/oled.cpp
     audio/menu.cpp
+    audio/sd_spi.c
+    audio/sd_diskio.c
+    audio/wav_load.c
+    audio/tt_store.cpp
+    lib/fatfs/ff.c
+    lib/fatfs/ffunicode.c
     i2s/i2s.c
 )
 pico_generate_pio_header(pico_tone_trixter
@@ -180,7 +186,7 @@ pico_generate_pio_header(pico_tone_trixter
 pico_generate_pio_header(pico_tone_trixter
     ${CMAKE_CURRENT_LIST_DIR}/i2s/i2s_in_slave.pio
 )
-target_include_directories(pico_tone_trixter PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+target_include_directories(pico_tone_trixter PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/lib/fatfs)
 target_link_libraries(pico_tone_trixter
     pico_stdlib
     pico_multicore

@@ -10,9 +10,14 @@
 #include <stdbool.h>
 
 void menu_init(void);
+void menu_open(void);      // enter the MAIN menu at the top row ("< back"), e.g. from the home screen
 // Apply an encoder event: turn = detents (negative = CCW, positive = CW), click =
 // button press. Returns true if the display changed (caller: menu_render + oled_flush).
 bool menu_event(int turn, bool click);
 void menu_render(void);   // draw the current menu into the OLED framebuffer
+
+// True (once, consuming the flag) if the user clicked "< back" at the top of MAIN — the
+// caller should show the home/splash screen instead of rendering the menu.
+bool menu_take_home(void);
 
 #endif // TT_MENU_H

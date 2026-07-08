@@ -8,8 +8,7 @@
 #   ir:         WAV file in /tonetrix/ir/  (also matches a built-in IR name:
 #               "tanglewood" / "garrison"). Use  ir: none  for a dry preset —
 #               that turns the whole convolution pipeline OFF. Omitting ir:
-#               keeps whatever IR is currently loaded.
-#   ir.on:      1/0 — force convolution on/off (rarely needed; ir: none does it)
+#               inherits the default's (which is none).
 #   in.on  eq.on  comp.on  out.on   stage enables (1/0, on/off)
 #   in.level:   pre-comp input trim (tames the hot IR), ~0.0..1.0
 #   eq.lo:      [freq_Hz, gain_dB]           low shelf

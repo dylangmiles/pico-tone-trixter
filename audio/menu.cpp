@@ -10,15 +10,22 @@
 enum { M_STAGES, M_PARAMS, M_EDIT, M_PRESET, M_IR };
 
 static int s_mode  = M_STAGES;
-static int s_sel   = 0;   // selected row at the main level (0=Preset, 1=IR, 2+=stage)
+static int s_sel   = 0;   // selected row at the main level (0=back, 1=Preset, 2=IR, 3=GR meter, 4+=stage)
 static int s_stage = 0;   // entered stage (PARAMS / EDIT levels)
 static int s_item  = 0;   // selected item in PARAMS: 0 = "< back", 1 = enable, 2+ = param[item-2]
 static int s_pick  = 0;   // selected entry in the PRESET / IR picker
+static bool s_go_home = false;  // set when "< back" clicked at MAIN; consumed by menu_take_home()
 
-#define N_SPECIAL 2       // main-level rows before the stages: Preset, IR
+#define N_SPECIAL 4       // main-level rows before the stages: back, Preset, IR, GR meter
 #define VIS_ROWS  7       // visible list rows below the title (8 text rows total, row 0 = title)
 
-void menu_init(void) { s_mode = M_STAGES; s_sel = 0; s_stage = 0; s_item = 0; s_pick = 0; }
+void menu_init(void) { s_mode = M_STAGES; s_sel = 0; s_stage = 0; s_item = 0; s_pick = 0; s_go_home = false; }
+
+// Open MAIN at the top ("< back") — so a click on the home screen enters the menu, and the
+// next click (on the now-selected "< back") returns to home.
+void menu_open(void) { s_mode = M_STAGES; s_sel = 0; }
+
+bool menu_take_home(void) { bool h = s_go_home; s_go_home = false; return h; }
 
 static void clamp(int *v, int n) { if (*v < 0) *v = 0; if (*v >= n) *v = n - 1; }
 
@@ -32,8 +39,10 @@ bool menu_event(int turn, bool click) {
         int n_top = N_SPECIAL + nstage;
         if (turn) { s_sel += turn; clamp(&s_sel, n_top); }
         if (click) {
-            if (s_sel == 0)      { s_mode = M_PRESET; s_pick = app_preset_current(); }
-            else if (s_sel == 1) { s_mode = M_IR;     s_pick = app_ir_current(); }
+            if (s_sel == 0)      { s_go_home = true; }                // "< back" → home/splash
+            else if (s_sel == 1) { s_mode = M_PRESET; s_pick = app_preset_current(); }
+            else if (s_sel == 2) { s_mode = M_IR;     s_pick = app_ir_current(); }
+            else if (s_sel == 3) { app_gr_set(!app_gr_enabled()); }   // toggle home GR meter in place
             else                 { s_mode = M_PARAMS; s_stage = s_sel - N_SPECIAL; s_item = 0; }
         }
         return turn || click;
@@ -118,11 +127,14 @@ void menu_render(void) {
         int top = scroll_top(s_sel, n_top, VIS_ROWS);
         for (int i = 0; i < VIS_ROWS && top + i < n_top; i++) {
             int it = top + i;
-            if (it == 0)      snprintf(line, sizeof line, "P: %s",  app_preset_name(app_preset_current()));
-            else if (it == 1) snprintf(line, sizeof line, "IR:%s",  app_ir_name(app_ir_current()));
+            if (it == 0)      snprintf(line, sizeof line, "< back");
+            else if (it == 1) snprintf(line, sizeof line, "P: %s",  app_preset_name(app_preset_current()));
+            else if (it == 2) snprintf(line, sizeof line, "IR:%s",  app_ir_name(app_ir_current()));
+            else if (it == 3) snprintf(line, sizeof line, "GR meter  %s", app_gr_enabled() ? "on" : "off");
             else {
                 Stage *st = dsp_chain_stage(it - N_SPECIAL);
-                snprintf(line, sizeof line, "%-5s   %s", st->name, st->enabled ? "on" : "off");
+                // value column at char 10, aligned with the "GR meter  <on/off>" row above
+                snprintf(line, sizeof line, "%-8s  %s", st->name, st->enabled ? "on" : "off");
             }
             row(i, s_sel - top, line);
         }

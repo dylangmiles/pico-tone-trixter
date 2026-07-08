@@ -201,6 +201,10 @@ Stage *dsp_chain_stage(int i)      { return (i >= 0 && i < N_STAGES) ? s_chain[i
 // enabled AND global bypass is off.
 bool dsp_chain_ir_enabled(void) { return s_ir.enabled && !g_dsp_bypass; }
 
+// Host-driven IR stage enable (main.cpp sets this from the current IR selection:
+// off when "none" is selected, on when a real IR is loaded).
+void dsp_chain_set_ir_enabled(bool on) { s_ir.enabled = on; }
+
 // Peak compressor gain reduction (dB, <= 0) since the last call; resets each call so
 // a periodic reader gets "peak GR over the interval". 0 dB = not compressing.
 float dsp_chain_comp_gr_db(void) {
@@ -221,39 +225,53 @@ float dsp_chain_comp_in_db(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Presets — IR id + every stage's params/enables. ir_id is interpreted by the
-// host (es8388_test): 0 = Tanglewood, 1 = Garrison.
+// Presets — IR ref + every stage's params/enables. `ir` is resolved by the host
+// (main.cpp) to a convolver IR: a built-in name or an SD WAV filename.
+// The active list defaults to s_builtin, but dsp_chain_install_presets() can point
+// it at an SD-parsed table (see audio/tt_store).
 // ---------------------------------------------------------------------------
-typedef struct {
-    const char *name;
-    int   ir_id;
-    bool  in_on, eq_on, comp_on, out_on;
-    float in_level;
-    float lo_f, lo_g, mid_f, mid_g, mid_q, hi_f, hi_g;
-    float thr, ratio, att, rel, mkup;
-    float out_level;
-} Preset;
-
-static const Preset s_presets[] = {
-    // name              ir  in    eq     cmp   out   in    lo_f lo_g mid_f mid_g mid_q hi_f  hi_g  thr  ratio att rel  mkup out
-    { "tanglewood-slide", 0, true, true,  true, true, 0.30f, 150,  3,  800, -3,  1.0f, 1500, -2,  -16, 3.5f, 22, 300,  6,  0.70f },
-    { "default",          0, true, false, true, true, 0.30f, 120,  0,  700,  0,  1.0f, 3500,  0,  -20, 2.0f, 20, 200,  3,  0.80f },
-    { "garrison",         1, true, false, true, true, 0.30f, 120,  0,  700,  0,  1.0f, 3500,  0,  -18, 3.0f, 20, 250,  5,  0.70f },
+static const Preset s_builtin[] = {
+    // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out
+    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed.
+    { "default",          NULL,         true, false, true, true, 0.30f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -20, 2.0f, 20, 200,  3,  0.80f },
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.30f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -16, 3.5f, 22, 300,  6,  0.70f },
+    // garrison (active pre-amp): EQ on by default — gentle warmth + de-honk scoop + top roll-off
+    { "garrison",         "garrison",   true, true,  true, true, 0.30f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -18, 3.0f, 20, 250,  5,  0.70f },
 };
-#define N_PRESETS ((int)(sizeof(s_presets) / sizeof(s_presets[0])))
+#define N_BUILTIN ((int)(sizeof(s_builtin) / sizeof(s_builtin[0])))
 
-int         dsp_chain_preset_count(void)     { return N_PRESETS; }
-const char *dsp_chain_preset_name(int idx)   { return (idx >= 0 && idx < N_PRESETS) ? s_presets[idx].name : ""; }
+static const Preset *s_presets = s_builtin;   // active list (built-in or SD-installed)
+static int           s_n_presets = N_BUILTIN;
+
+void dsp_chain_install_presets(const Preset *arr, int n) {
+    if (arr && n > 0) { s_presets = arr;      s_n_presets = n; }
+    else              { s_presets = s_builtin; s_n_presets = N_BUILTIN; }
+}
+
+const Preset *dsp_chain_default_preset(void) {
+    for (int i = 0; i < N_BUILTIN; i++)
+        if (strcmp(s_builtin[i].name, "default") == 0) return &s_builtin[i];
+    return &s_builtin[0];
+}
+
+int         dsp_chain_preset_count(void)     { return s_n_presets; }
+const char *dsp_chain_preset_name(int idx)   { return (idx >= 0 && idx < s_n_presets) ? s_presets[idx].name : ""; }
+const char *dsp_chain_preset_ir(int idx) {
+    const char *ir = (idx >= 0 && idx < s_n_presets) ? s_presets[idx].ir : NULL;
+    return ir ? ir : "";
+}
 
 int dsp_chain_find_preset(const char *name) {
-    for (int i = 0; i < N_PRESETS; i++)
+    for (int i = 0; i < s_n_presets; i++)
         if (strcmp(s_presets[i].name, name) == 0) return i;
     return -1;
 }
 
 int dsp_chain_load_preset(int idx) {
-    if (idx < 0 || idx >= N_PRESETS) return -1;
+    if (idx < 0 || idx >= s_n_presets) return -1;
     const Preset *p = &s_presets[idx];
+    // Note: the IR stage enable is driven by the host's IR selection (none vs a real IR),
+    // not set here — see main.cpp app_preset_load / the IR switch.
     s_in.enabled = p->in_on;  s_eq.enabled = p->eq_on;
     s_comp.enabled = p->comp_on;  s_out.enabled = p->out_on;
     s_in_params[IN_LEVEL].value  = p->in_level;
@@ -266,7 +284,7 @@ int dsp_chain_load_preset(int idx) {
     s_cp_params[CP_MAKEUP].value = p->mkup;
     s_out_params[OUT_LEVEL].value = p->out_level;
     s_in.dirty = s_eq.dirty = s_comp.dirty = s_out.dirty = true;
-    return p->ir_id;
+    return 0;
 }
 
 void dsp_chain_init(float fs, float out_level_lin) {

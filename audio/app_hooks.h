@@ -20,6 +20,11 @@ const char *app_ir_name(int i);
 int         app_ir_current(void);         // active (or pending) IR index
 void        app_ir_select(int i);         // switch active IR (cross-core safe)
 
+// Home-screen GR-meter band on/off (UI setting; state lives in main.cpp). Off by default
+// because its live repaints couple I2C crosstalk into the analog input on this build.
+bool        app_gr_enabled(void);
+void        app_gr_set(bool on);
+
 #ifdef __cplusplus
 }
 #endif

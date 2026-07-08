@@ -54,6 +54,10 @@ void dsp_chain_process(float *buf, int n);
 // global bypass is off. The actual convolution runs cross-core in es8388_test.cpp.
 bool dsp_chain_ir_enabled(void);
 
+// Set the IR (convolution) stage enable directly. The host calls this from its IR
+// selection logic — convolution is off when the "none" IR is selected.
+void dsp_chain_set_ir_enabled(bool on);
+
 // Peak compressor gain reduction in dB (<= 0) since the last call; resets each call.
 // For a live "GR meter" while dialing the comp threshold. 0 dB = not compressing.
 float dsp_chain_comp_gr_db(void);
@@ -62,13 +66,37 @@ float dsp_chain_comp_gr_db(void);
 // comp.thresh relative to this to know where the stage actually engages.
 float dsp_chain_comp_in_db(void);
 
-// --- Presets: named bundles of (IR id + every stage's params/enables) ----------
+// --- Presets: named bundles of (IR ref + every stage's params/enables) ----------
+// A preset is plain data so it can come from the built-in table OR be parsed from
+// an SD card (see audio/tt_store) and installed at runtime. `ir` names the impulse
+// response: a built-in name ("tanglewood"/"garrison") or a WAV filename on the card
+// ("mycab.wav"); NULL/"" means "keep the current IR". The host (main.cpp) resolves
+// the string to an actual convolver IR.
+typedef struct {
+    const char *name;
+    const char *ir;                       // IR name/filename, or "none"/NULL = dry (no IR,
+                                          // convolution off — the host selects the "none" IR)
+    bool  in_on, eq_on, comp_on, out_on;
+    float in_level;
+    float lo_f, lo_g, mid_f, mid_g, mid_q, hi_f, hi_g;
+    float thr, ratio, att, rel, mkup;
+    float out_level;
+} Preset;
+
 int         dsp_chain_preset_count(void);
 const char *dsp_chain_preset_name(int idx);
+const char *dsp_chain_preset_ir(int idx);              // IR ref for preset idx ("" if none)
 int         dsp_chain_find_preset(const char *name);   // -1 if not found
-// Apply preset idx (sets every stage's params + enables, marks them dirty). Returns
-// the preset's IR id so the host can switch the convolver IR; -1 on bad index.
+// Apply preset idx (sets every stage's params + enables, marks them dirty).
+// Returns 0 on success, -1 on bad index. The host reads dsp_chain_preset_ir(idx)
+// to switch the convolver IR.
 int         dsp_chain_load_preset(int idx);
+
+// Replace the active preset list (e.g. parsed from the SD card). `arr` must remain
+// valid for the program's life (static storage). n<=0 restores the built-in table.
+void          dsp_chain_install_presets(const Preset *arr, int n);
+// The built-in "default" preset — a seed for partially-specified SD presets.
+const Preset *dsp_chain_default_preset(void);
 
 // Number of stages / accessor — for the future menu to iterate generically.
 int    dsp_chain_stage_count(void);

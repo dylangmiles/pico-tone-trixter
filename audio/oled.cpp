@@ -8,7 +8,9 @@
 
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "hardware/dma.h"
 #include <string.h>
+#include <stdio.h>
 
 #define OLED_ADDR   0x3C
 #define OLED_W      128
@@ -197,7 +199,159 @@ void oled_pixel(int x, int y, bool on) {
     if (on) *b |= m; else *b &= ~m;
 }
 
+// --- Audio-safe asynchronous DMA flush --------------------------------------
+// SH1106 has no cross-page auto-increment, so the frame can't be one DMA burst: each page
+// needs a 4-byte page/col command before its 128 data bytes. We push it page-at-a-time,
+// serviced from the Core 0 foreground loop. The 4-byte command stays a blocking i2c write
+// (~0.7 ms, negligible); the 129-byte data payload (0x40 control + 128 px) goes out via DMA
+// paced by the I2C TX DREQ — Core 0 is free to convolve during those ~23 ms/page. i2c1 is
+// otherwise idle at runtime (ES8388 is only touched at init), so no bus contention. The 50 kHz
+// clock is kept: it's chosen to keep the I2C edges out of the audio (EMI), not for timing —
+// and with DMA its transfer time no longer costs any Core 0 stall.
+static int      s_dma_chan   = -1;
+static volatile bool s_flush_running = false;    // a page range is being pushed
+static bool     s_dma_inflight = false;          // the current page's data DMA is feeding the FIFO
+static int      s_flush_page  = 0;               // next page to push
+static int      s_flush_last  = 0;               // last page in the active range
+static int      s_pending_first = -1;            // a range requested while one was in flight
+static int      s_pending_last  = -1;            // (coalesced into the widest cover)
+// 0x40 ctrl + 128 data, as full 32-bit IC_DATA_CMD words. 32-bit (not 16-bit) matches how
+// the SDK itself writes data_cmd (io_rw_32) — safest access width for the APB register.
+static uint32_t s_dma_words[1 + OLED_W];
+
+static void oled_dma_claim(void) {
+    if (s_dma_chan < 0) {
+        s_dma_chan = dma_claim_unused_channel(true);
+        // Enable the I2C's TX DMA request line. Without TDMAE the DW_apb_i2c never asserts
+        // its TX DREQ, so a DREQ-paced DMA to data_cmd stalls forever (transfers nothing).
+        // The SDK's blocking i2c API doesn't set this. Harmless to leave on for blocking
+        // writes — the DREQ is simply ignored when no DMA is listening.
+        i2c1->hw->dma_cr = I2C_IC_DMA_CR_TDMAE_BITS;
+    }
+}
+
+// The previous page's data has fully left i2c1 (FIFO drained + STOP shifted out), so a new
+// transaction can safely start. Checked only after the DMA has finished feeding the FIFO.
+static inline bool oled_i2c_tx_done(void) {
+    return i2c1->hw->txflr == 0 &&
+           !(i2c1->hw->status & I2C_IC_STATUS_MST_ACTIVITY_BITS);
+}
+
+void oled_flush_service(void) {
+    if (!s_flush_running) return;
+
+    if (s_dma_inflight) {
+        if (dma_channel_is_busy(s_dma_chan)) return;   // DMA still feeding the 16-deep TX FIFO
+        if (!oled_i2c_tx_done()) return;               // FIFO still draining / STOP not out yet
+        s_dma_inflight = false;
+        s_flush_page++;                                // this page is on the panel
+    }
+
+    if (s_flush_page > s_flush_last) {                 // range done — start a queued one, if any
+        if (s_pending_first >= 0) {
+            s_flush_page = s_pending_first;
+            s_flush_last = s_pending_last;
+            s_pending_first = s_pending_last = -1;
+        } else {
+            s_flush_running = false;
+            return;
+        }
+    }
+
+    // Set the page/column pointer (tiny blocking write; leaves i2c1 tar = OLED_ADDR).
+    int page = s_flush_page;
+    uint8_t set[] = { 0x00,                             // Co=0, D/C#=0 → command stream
+                      (uint8_t)(0xB0 | page),
+                      (uint8_t)(0x00 | (OLED_COLOFF & 0x0F)),
+                      (uint8_t)(0x10 | (OLED_COLOFF >> 4)) };
+    i2c_write_blocking(i2c1, OLED_ADDR, set, sizeof(set), false);
+
+    // Build the data payload as IC_DATA_CMD words and DMA it out; STOP on the final byte.
+    s_dma_words[0] = 0x40;                             // Co=0, D/C#=1 → data stream
+    const uint8_t *src = &s_fb[page * OLED_W];
+    for (int i = 0; i < OLED_W; i++) s_dma_words[1 + i] = src[i];
+    s_dma_words[OLED_W] |= I2C_IC_DATA_CMD_STOP_BITS;  // STOP after last pixel byte
+
+    dma_channel_config c = dma_channel_get_default_config(s_dma_chan);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, i2c_get_dreq(i2c1, true));        // pace on I2C TX FIFO space
+    dma_channel_configure(s_dma_chan, &c, &i2c1->hw->data_cmd, s_dma_words, 1 + OLED_W, true);
+    s_dma_inflight = true;
+}
+
+bool oled_flush_busy(void) { return s_flush_running; }
+
+void oled_flush_pages_async(int first, int last) {
+    if (first < 0) first = 0;
+    if (last > OLED_PAGES - 1) last = OLED_PAGES - 1;
+    if (first > last) return;
+    oled_dma_claim();
+    if (s_flush_running) {                              // coalesce: widen the queued range
+        if (s_pending_first < 0) { s_pending_first = first; s_pending_last = last; }
+        else {
+            if (first < s_pending_first) s_pending_first = first;
+            if (last  > s_pending_last)  s_pending_last  = last;
+        }
+        return;
+    }
+    s_flush_page   = first;
+    s_flush_last   = last;
+    s_dma_inflight = false;
+    s_flush_running = true;
+    oled_flush_service();                               // kick the first page now
+}
+
+void oled_flush_async(void) { oled_flush_pages_async(0, OLED_PAGES - 1); }
+
+void oled_dma_selftest(void) {
+    oled_dma_claim();
+    printf("[oleddma] chan=%d dma_cr=0x%08x TDMAE=%d dreq=%d addr=%p\n",
+           s_dma_chan, (unsigned)i2c1->hw->dma_cr,
+           (int)((i2c1->hw->dma_cr & I2C_IC_DMA_CR_TDMAE_BITS) ? 1 : 0),
+           (int)i2c_get_dreq(i2c1, true), (void *)&i2c1->hw->data_cmd);
+
+    // Obvious test pattern: full border + text. If this shows, the async DMA path works.
+    oled_clear();
+    for (int x = 0; x < OLED_W; x++) { oled_pixel(x, 0, true); oled_pixel(x, OLED_H - 1, true); }
+    for (int y = 0; y < OLED_H; y++) { oled_pixel(0, y, true); oled_pixel(OLED_W - 1, y, true); }
+    oled_text(8, 8,  "DMA SELFTEST");
+    oled_text(8, 24, "async flush ok");
+
+    absolute_time_t t0 = get_absolute_time();
+    oled_flush_async();
+    int max_page = -1, iters = 0;
+    while (s_flush_running) {
+        oled_flush_service();
+        iters++;
+        if (s_flush_page > max_page) max_page = s_flush_page;
+        if (absolute_time_diff_us(t0, get_absolute_time()) > 1000000) {   // 1 s stall cap
+            printf("[oleddma] STALL page=%d inflight=%d dma_busy=%d remaining=%u "
+                   "txflr=%u mst_active=%d iters=%d\n",
+                   s_flush_page, (int)s_dma_inflight,
+                   (int)dma_channel_is_busy(s_dma_chan),
+                   (unsigned)dma_channel_hw_addr(s_dma_chan)->transfer_count,
+                   (unsigned)i2c1->hw->txflr,
+                   (int)((i2c1->hw->status & I2C_IC_STATUS_MST_ACTIVITY_BITS) ? 1 : 0),
+                   iters);
+            dma_channel_abort(s_dma_chan);            // don't leave the state machine wedged
+            s_dma_inflight = false;
+            s_flush_running = false;
+            return;
+        }
+    }
+    printf("[oleddma] OK completed in %lld us, max_page=%d iters=%d\n",
+           (long long)absolute_time_diff_us(t0, get_absolute_time()), max_page, iters);
+}
+
+// Finish any in-flight async flush before a blocking transfer touches the same bus.
+static void oled_flush_drain(void) {
+    while (s_flush_running) oled_flush_service();
+}
+
 void oled_flush_pages(int first_page, int last_page) {
+    oled_flush_drain();                                 // don't collide with an async flush
     if (first_page < 0) first_page = 0;
     if (last_page > OLED_PAGES - 1) last_page = OLED_PAGES - 1;
     for (int page = first_page; page <= last_page; page++) {
