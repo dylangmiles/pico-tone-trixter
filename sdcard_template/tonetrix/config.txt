@@ -1,0 +1,5 @@
+# Tone Trixter — global config
+# Flow-style YAML: flat "key: value", # comments. No significant indentation.
+
+boot_preset: tanglewood-slide   # preset loaded at power-on (name from presets.txt)
+gr_meter: off                   # home-screen gain-reduction bar: on / off

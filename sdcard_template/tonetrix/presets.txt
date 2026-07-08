@@ -1,0 +1,64 @@
+# Tone Trixter — presets
+# =========================================================================
+# Flow-style YAML. One preset per block; "---" (or the next "name:") starts a
+# new one. Any key you omit inherits the firmware's built-in "default" preset,
+# so a preset can be as short as a name + the few things you want to change.
+#
+#   name:       preset name (shown on screen + selected by config boot_preset)
+#   ir:         WAV file in /tonetrix/ir/  (also matches a built-in IR name:
+#               "tanglewood" / "garrison"). Omit to keep the current IR.
+#   in.on  eq.on  comp.on  out.on   stage enables (1/0, on/off)
+#   in.level:   pre-comp input trim (tames the hot IR), ~0.0..1.0
+#   eq.lo:      [freq_Hz, gain_dB]           low shelf
+#   eq.mid:     [freq_Hz, gain_dB, Q]        mid peak
+#   eq.hi:      [freq_Hz, gain_dB]           high shelf
+#   comp:       [thresh_dB, ratio, attack_ms, release_ms, makeup_dB]
+#   out.level:  final output level, ~0.0..1.0
+#
+# This file reproduces the firmware's three built-in presets. Edit freely —
+# the pedal reads it on boot; type `sdreload` over UART to re-read without a
+# power cycle.
+# =========================================================================
+
+name: tanglewood-slide
+ir: tanglewood.wav
+in.on: 1
+eq.on: 1
+comp.on: 1
+out.on: 1
+in.level: 0.30
+eq.lo: [150, 3.0]
+eq.mid: [800, -3.0, 1.0]
+eq.hi: [1500, -2.0]
+comp: [-16, 3.5, 22, 300, 6]
+out.level: 0.70
+
+---
+
+name: default
+ir: tanglewood.wav
+in.on: 1
+eq.on: 0
+comp.on: 1
+out.on: 1
+in.level: 0.30
+eq.lo: [120, 0.0]
+eq.mid: [700, 0.0, 1.0]
+eq.hi: [3500, 0.0]
+comp: [-20, 2.0, 20, 200, 3]
+out.level: 0.80
+
+---
+
+name: garrison
+ir: garrison.wav
+in.on: 1
+eq.on: 1
+comp.on: 1
+out.on: 1
+in.level: 0.30
+eq.lo: [120, 2.0]
+eq.mid: [1000, -2.5, 1.0]
+eq.hi: [3500, -1.5]
+comp: [-18, 3.0, 20, 250, 5]
+out.level: 0.70
