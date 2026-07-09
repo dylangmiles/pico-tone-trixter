@@ -177,22 +177,21 @@ static void in_process(Stage *s, float *buf, int n) {
 // ---------------------------------------------------------------------------
 // Chain wiring
 // ---------------------------------------------------------------------------
-// Stage 0: IR — a flag-only stage. The actual 2048-tap convolution runs cross-core
-// in es8388_test.cpp BEFORE dsp_chain_process(), so process()/recompute() are no-ops
-// here; this entry exists so the IR shows in `dump`, is enabled/disabled by the host's
-// IR selection (the `ir <name|none>` command / preset, via dsp_chain_set_ir_enabled), and is
-// covered by global bypass uniformly with the rest. es8388_test reads its effective
-// state via dsp_chain_ir_enabled().
-static void ir_noop_recompute(Stage *s, float fs) { (void)s; (void)fs; }
-static void ir_noop_process(Stage *s, float *buf, int n) { (void)s; (void)buf; (void)n; }
-
-static Stage s_ir   = { "ir",   true,  NULL,         0,     false, ir_noop_recompute, ir_noop_process, NULL };
+// IR enable — a flag only, NOT a chain stage. The 2048-tap convolution runs cross-core
+// in main.cpp BEFORE dsp_chain_process(), gated by dsp_chain_ir_enabled(). It's driven
+// entirely by the host's IR SELECTION ("none" vs a real IR — the `ir <name|none>` command,
+// preset, or encoder IR picker, via dsp_chain_set_ir_enabled), so it is deliberately kept
+// OUT of s_chain: there's no "ir on/off" toggle in the stage menu / `dump` (that would be a
+// redundant second control). Global bypass still disables it (see dsp_chain_ir_enabled).
+static Stage s_ir   = { "ir",   true,  NULL,         0,     false, NULL, NULL, NULL };
 static Stage s_in   = { "in",   true,  s_in_params,  IN_N,  true,  in_recompute,   in_process,   &s_in_state  };
 static Stage s_eq   = { "eq",   true,  s_eq_params,  EQ_N,  true,  eq_recompute,   eq_process,   &s_eq_state  };
 static Stage s_comp = { "comp", true,  s_cp_params,  CP_N,  true,  comp_recompute, comp_process, &s_cp_state  };
 static Stage s_out  = { "out",  true,  s_out_params, OUT_N, true,  out_recompute,  out_process,  &s_out_state };
 
-static Stage *s_chain[] = { &s_ir, &s_in, &s_eq, &s_comp, &s_out };
+// Audio stage chain (post-IR): IN trim -> EQ -> Dynamics -> Output. s_ir is intentionally
+// excluded (it's a selection, not a toggleable stage) — see above.
+static Stage *s_chain[] = { &s_in, &s_eq, &s_comp, &s_out };
 #define N_STAGES ((int)(sizeof(s_chain) / sizeof(s_chain[0])))
 
 int    dsp_chain_stage_count(void) { return N_STAGES; }

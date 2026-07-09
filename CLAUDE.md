@@ -162,7 +162,9 @@ them. Parsed in `dsp_chain.cpp` (+ `main.cpp` for tuner/meter/preset/ir):
 - `<stage> on|off` — enable/bypass a stage (`in`, `eq`, `comp`, `out`)
 - `preset [name]` — list, or load one (`default`, `tanglewood-slide`, `garrison`) — **also
   switches IR**. `default` is the dry baseline (no IR, convolution off) and is the boot preset.
-- `ir on|off` — IR bypass; `bypass on|off` — kill IR+EQ+comp (output level stays)
+- `ir [name|none]` — select IR (a name / `none`=off / `on`=re-engage; no arg lists). IR is a
+  selection, not a chain stage — there's no `ir` in the stage menu/`dump`. `bypass on|off` —
+  kill IR+EQ+comp (output level stays)
 - `tuner on|off` — YIN tuner mode (dry monitor; UART needle ~12/s)
 - `meter on|off` — live comp gain-reduction + input-level meter (~1/s)
 - `dump` — all stages + params + ranges; `stats` — counters
