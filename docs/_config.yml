@@ -14,6 +14,7 @@ theme: minima
 plugins:
   - jekyll-feed
   - jekyll-seo-tag
+  - jekyll-sitemap   # generates /sitemap.xml (+ robots.txt) for Google Search Console
 
 # Posts are a folder-per-episode collection (each with co-located assets),
 # rather than the flat _posts convention.
