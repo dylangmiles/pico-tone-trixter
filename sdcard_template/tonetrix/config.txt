@@ -3,3 +3,5 @@
 
 boot_preset: default    # preset loaded at power-on (name from presets.txt)
 gr_meter: off           # home-screen gain-reduction bar: on / off
+# ES8388 input PGA gain is per-PRESET now (see presets.txt `pga:`) — K&K 12, Garrison 6.
+# Also settable live via UART 'pga' / the menu. No global PGA key here.

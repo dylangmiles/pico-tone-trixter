@@ -93,15 +93,18 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     // open-board pickup noise (12 mV at TSin idle) close to digital FS,
     // triggering codec noise-shaping artefacts at ~19 kHz (118 mV LOUT noise
     // floor at rest, audible as loud HF squeal + harsh clipping during strum).
-    // Pulled back to **0x66 (+18 dB) + digital ×2** = +24 dB total chain gain,
-    // a middle ground between the first iteration (+18 dB only, signal lost
-    // in noise) and the over-driven second (+33 dB, unusable). Expected:
-    // strum ~60 mV at LOUT vs ~25 mV noise = ~+8 dB SNR. Audibly cleaner than
-    // first iteration; usable while open-board.
-    // Real fix for SNR: enclosure + chassis ground reduces TSin noise floor
-    // (currently ~10 mV) by ~10–15 dB, lifting the SNR ceiling above which
-    // more chain gain can't help.
-    ok &= es8388_write(i2c, 0x09, 0x66);
+    // 0x66 (+18 dB) was the JFET-daughter value: a middle ground between the
+    // first iteration (+18 dB-only, signal lost in noise) and the over-driven
+    // second (+33 dB, codec noise-shaping artefacts).
+    // 2026-07-11: analog front end switched to the OPA1642 op-amp daughter
+    // (+6 dB gain, analog_input_opamp_buffer_2026-07-09.md). That +6 dB now sits
+    // AHEAD of the ADC, so the PGA drops +18→+12 dB (0x66→0x44) to restore ADC
+    // headroom — at +18 the op-amp clipped the ADC ~6 dB early (bench 2026-07-11,
+    // opamp_vs_jfet_snr_2026-07-11). Net: same total chain gain / output level,
+    // better SNR (gain moved forward — Friis). The digital trim (dsp_chain
+    // in.level) is unchanged; only ADC-headroom gain moves.
+    // *** For the JFET source-follower daughter (unity gain), use 0x66 (+18 dB). ***
+    ok &= es8388_write(i2c, 0x09, 0x44);  // +12 dB — OPA1642 op-amp daughter (JFET daughter: 0x66 / +18 dB)
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo

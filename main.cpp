@@ -57,6 +57,7 @@ namespace ir_gn {
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>            // atoi (UART 'pga' arg)
 
 // Enable FPU Flush-to-Zero on the CALLING core: denormal floats (< ~1e-38) flush to
 // 0 instead of taking the slow IEEE denormal path. The IR's long decaying tail
@@ -231,6 +232,8 @@ void        app_preset_load(int i) {
     if (ir < 0) { /* preset IR missing → keep whatever's selected */ }
     else if (ir != s_cur_ir) g_pending_ir = ir;            // fg loads/decodes + sets convolution enable
     else dsp_chain_set_ir_enabled(ir != IR_NONE);          // same selection → just correct the enable
+    int pdb = dsp_chain_preset_pga(i);                     // per-preset ES8388 PGA (dB); <0 = leave unchanged
+    if (pdb >= 0) app_pga_set_nib((pdb + 1) / 3);          // K&K ~12, active Garrison ~6 — nearest 3 dB step
     s_cur_preset = i;
 }
 int         app_ir_count(void)       { return s_ir_count; }
@@ -266,11 +269,28 @@ static volatile bool     g_meter = false;        // live compressor gain-reducti
 static volatile bool     g_gr_oled = false;      // show the live GR-meter band on the home screen (menu / 'gr on')
 static volatile bool     g_on_home = false;      // home/splash screen is the one currently displayed (not a menu)
 static volatile bool     g_tuner = false;        // tuner mode: pitch-detect dry input, UART needle
+static volatile uint32_t g_out_peak_q = 0;       // peak |output sample| (int32 mag) since last 'meter' read
+static volatile uint32_t g_out_clip   = 0;       // # output samples that hit DAC full-scale since last 'meter' read
+extern volatile uint32_t g_in_clip;              // ADC-input clip count — defined in the IRQ-visible block (with g_irq1_count)
 
 // app_hooks.h: GR-meter band toggle (state owned here; the menu + UART 'gr on/off' drive it).
 // The foreground loop's home tick redraws/hides the band from g_gr_oled, so this is a plain setter.
 extern "C" bool app_gr_enabled(void)  { return g_gr_oled; }
 extern "C" void app_gr_set(bool on)   { g_gr_oled = on; }
+
+// app_hooks.h: ES8388 input PGA (reg 0x09, both channels). Nibble 0..8 = 0..+24 dB in 3 dB
+// steps. Default 4 (+12 dB) tracks es8388_init's 0x44 for the OPA1642 op-amp daughter; use
+// 6 (+18 dB) for the JFET source-follower daughter. Live via UART 'pga' or the MAIN menu —
+// lets us A/B the two daughters without reflashing.
+static int s_pga_nib = 4;                              // 4 = +12 dB, matches es8388_init (0x44)
+extern "C" int  app_pga_nib(void)  { return s_pga_nib; }
+extern "C" int  app_pga_db(void)   { return s_pga_nib * 3; }
+extern "C" void app_pga_set_nib(int n) {
+    if (n < 0) n = 0;
+    if (n > 8) n = 8;
+    s_pga_nib = n;
+    es8388_write_reg(i2c1, 0x09, (uint8_t)((n << 4) | n));   // MicAmpL | MicAmpR, both channels
+}
 
 // Print one tuner line: note + cents + an ASCII needle ([:] = in tune, # = pitch).
 static void tuner_print_uart(void) {
@@ -576,10 +596,32 @@ static void dsp_uart_poll(void) {
                 }
                 else if (strcmp(line, "tuner on") == 0)  { g_tuner = true;  printf("tuner=on (dry monitor; 'tuner off' to resume)\n"); }
                 else if (strcmp(line, "tuner off") == 0) { g_tuner = false; printf("tuner=off\n"); }
-                else if (strcmp(line, "meter on") == 0)  { g_meter = true;  printf("meter=on\n"); }
+                else if (strcmp(line, "meter on") == 0)  { g_out_peak_q = 0; g_out_clip = 0; g_in_clip = 0; g_meter = true;  printf("meter=on (comp in / GR / output dBFS / ADC+DAC clip, ~1/s)\n"); }
                 else if (strcmp(line, "meter off") == 0) { g_meter = false; printf("meter=off\n"); }
                 else if (strcmp(line, "gr on") == 0)  { g_gr_oled = true;  if (g_on_home && !g_tuner) show_splash(); printf("gr=on (home GR-meter band shown)\n"); }
                 else if (strcmp(line, "gr off") == 0) { g_gr_oled = false; if (g_on_home && !g_tuner) show_splash(); printf("gr=off (home GR-meter band hidden)\n"); }
+                else if (strcmp(line, "pga") == 0 || strncmp(line, "pga ", 4) == 0) {
+                    // ES8388 input PGA gain (reg 0x09) — live, no reflash. The PGA is
+                    // quantised to 3 dB steps (0,3,..,24); a requested dB snaps to the
+                    // nearest. +12 dB = op-amp daughter, +18 dB = JFET daughter.
+                    const char *arg = line + 3;
+                    while (*arg == ' ') arg++;
+                    if (*arg == '\0')
+                        printf("pga: +%d dB (step %d/8). usage: pga <dB> — snaps to nearest 3 dB step "
+                               "(0,3,6,9,12,15,18,21,24); +12=op-amp, +18=JFET\n",
+                               app_pga_db(), app_pga_nib());
+                    else {
+                        int req = atoi(arg);                       // "12" or "+12"
+                        app_pga_set_nib((req + 1) / 3);            // nearest 3 dB step; hook clamps 0..8
+                        const char *tag = app_pga_nib() == 4 ? "  [op-amp daughter]" :
+                                          app_pga_nib() == 6 ? "  [JFET daughter]"   : "";
+                        if (app_pga_db() != req)
+                            printf("pga -> +%d dB (step %d/8; snapped from %d to nearest 3 dB step)%s\n",
+                                   app_pga_db(), app_pga_nib(), req, tag);
+                        else
+                            printf("pga -> +%d dB (step %d/8)%s\n", app_pga_db(), app_pga_nib(), tag);
+                    }
+                }
                 else if (strcmp(line, "oleddma") == 0) oled_dma_selftest();   // DMA-flush diagnostic
                 else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
@@ -626,7 +668,8 @@ static void dsp_uart_poll(void) {
                            "  fsw on|off              raw footswitch GP18/GP19 on change (wiring test)\n"
                            "  oled                    re-init OLED + TOP/BOT border test pattern\n"
                            "  oleddma                 async OLED DMA-flush self-test\n"
-                           "  gr on|off               live OLED gain-reduction meter (filming/bench; blips audio)\n");
+                           "  gr on|off               live OLED gain-reduction meter (filming/bench; blips audio)\n"
+                           "  pga <dB>                ES8388 input PGA (0..24, 3 dB steps; +12 op-amp, +18 JFET daughter)\n");
 #if ENABLE_IR
                     printf("SD card (/tonetrix on the card):\n"
                            "  sdtest                  init + mount + list root dir\n"
@@ -636,6 +679,20 @@ static void dsp_uart_poll(void) {
                            "  sdreload                re-read the card after editing (no reboot)\n");
 #endif
                     dsp_chain_command(line);               // then the DSP-command section
+                }
+                else if (strcmp(line, "dump") == 0) {
+                    // App/codec settings owned here (not chain params), then the chain dump.
+                    printf("--- app/codec ---\n");
+                    printf("  pga        = +%d dB (step %d/8)%s\n", app_pga_db(), app_pga_nib(),
+                           app_pga_nib() == 4 ? "  [op-amp daughter]" :
+                           app_pga_nib() == 6 ? "  [JFET daughter]"   : "");
+                    printf("  preset     = %s [%d]\n", dsp_chain_preset_name(s_cur_preset), s_cur_preset);
+                    printf("  ir         = %s%s\n", s_ir_table[app_ir_current()].name,
+                           app_ir_current() == IR_NONE ? " (convolution off)" : "");
+                    printf("  gr_meter   = %s\n", g_gr_oled ? "on" : "off");
+                    printf("  tuner      = %s\n", g_tuner  ? "on" : "off");
+                    printf("  meter      = %s\n", g_meter  ? "on" : "off");
+                    dsp_chain_command(line);               // then the DSP chain (stages + params + bypass)
                 }
                 else if (!dsp_chain_command(line))
                     printf("? '%s' (try help)\n", line);
@@ -737,6 +794,7 @@ static uint s_in_sm;
 
 volatile uint32_t g_irq1_count  = 0;
 volatile uint32_t g_stale_count = 0;
+volatile uint32_t g_in_clip     = 0;   // ADC-input (guitar) samples at full-scale since last 'meter' read (IRQ-updated)
 volatile int32_t  g_peak_l      = 0;
 volatile int32_t  g_peak_r      = 0;
 volatile int32_t  g_min_l       = 0;
@@ -842,12 +900,19 @@ static void es8388_sync_cycle(i2c_inst_t *i2c) {
 // ---------------------------------------------------------------------------
 static void input_dma_irq1_handler(void) {
     g_irq1_count++;
+#if ENABLE_IR
+    const bool mtr = g_meter;   // read once — gates the ADC-clip meter work so it's free when 'meter' off
+                                // (g_meter is product-only, inside the ENABLE_IR block; the meter is too)
+#endif
     for (int i = 0; i < 2; i++) {
         if (!dma_channel_get_irq1_status(s_in_chan[i])) continue;
         dma_channel_acknowledge_irq1(s_in_chan[i]);
 
         const int32_t *src = s_in_buf[i];
         int32_t peak_l = 0, peak_r = 0, min_l = 0x7fffffff, max_l = (int32_t)0x80000000;
+#if ENABLE_IR
+        uint32_t blk_iclip = 0;               // ADC-input (left/guitar) samples at full-scale this block ('meter')
+#endif
 #if ENABLE_IR
         // Capture into the next double buffer; the foreground loop convolves it.
         static int s_dsp_w = 0;
@@ -882,9 +947,15 @@ static void input_dma_irq1_handler(void) {
             int32_t ar = r_raw < 0 ? -r_raw : r_raw;
             if (al > peak_l) peak_l = al;
             if (ar > peak_r) peak_r = ar;
+#if ENABLE_IR
+            if (mtr && al >= (int32_t)0x7FFF0000) blk_iclip++;   // ADC left-channel at full-scale (~-0.0003 dBFS) = clip (metering only)
+#endif
             if (l_raw < min_l) min_l = l_raw;
             if (l_raw > max_l) max_l = l_raw;
         }
+#if ENABLE_IR
+        if (mtr) g_in_clip += blk_iclip;   // commit only while metering; read+reset by 'meter'
+#endif
 
 #if ENABLE_IR
         // Publish the captured block to the foreground and flip buffers. No
@@ -1245,7 +1316,7 @@ int main() {
                 const char *bp = tt_store_boot_preset();
                 int bi = (bp && bp[0]) ? dsp_chain_find_preset(bp) : 0;
                 if (bi < 0) { printf("sd: boot_preset '%s' not found — using first\n", bp); bi = 0; }
-                app_preset_load(bi);                       // params now + safe IR switch
+                app_preset_load(bi);                       // params now + safe IR switch + the preset's own PGA
                 printf("sd: on-card config loaded — %d preset%s, %d SD IR%s, boot '%s'\n",
                        n, n == 1 ? "" : "s", s_ir_count - N_EMBED_IR,
                        (s_ir_count - N_EMBED_IR) == 1 ? "" : "s", dsp_chain_preset_name(bi));
@@ -1442,13 +1513,21 @@ int main() {
                 dsp_chain_process(s_dsp_out, I2S_BLOCK_SIZE);   // EQ -> Dynamics -> Output level
             }
             int wb = g_staging_pub ^ 1;            // fill the buffer the output IRQ is NOT reading
+            uint32_t blk_opeak = 0, blk_oclip = 0; // output peak + DAC-clip count this block (for 'meter')
             for (int j = 0; j < I2S_BLOCK_SIZE; j++) {
                 float f = s_dsp_out[j];            // output level applied by the chain's "out" stage
+                if (f >= 1.0f || f <= -1.0f) blk_oclip++;   // hit the DAC full-scale before clamping = clip
                 if (f >=  1.0f) f =  0.999999f;
                 if (f <  -1.0f) f = -1.0f;
                 int32_t l = (int32_t)(f * 2147483648.0f);
+                uint32_t al = (uint32_t)(l < 0 ? -(int64_t)l : l);
+                if (al > blk_opeak) blk_opeak = al;
                 s_staging_buf[wb][j * 2]     = l;
                 s_staging_buf[wb][j * 2 + 1] = l;
+            }
+            if (g_meter) {                         // commit peak-hold + clip count only while metering
+                if (blk_opeak > g_out_peak_q) g_out_peak_q = blk_opeak;
+                g_out_clip += blk_oclip;
             }
             g_staging_pub = wb;                    // atomic publish to the output IRQ
             uint32_t proc_dt = time_us_32() - proc_t0;   // includes the cross-core tail wait
@@ -1491,8 +1570,14 @@ int main() {
         if (g_meter) {
             float in = dsp_chain_comp_in_db();   // peak level hitting the comp
             float gr = dsp_chain_comp_gr_db();    // peak gain reduction
-            printf("comp in %6.1f dBFS   GR %5.1f dB%s\n",
-                   (double)in, (double)gr, gr <= -0.1f ? "" : "  (none)");
+            uint32_t opk = g_out_peak_q; g_out_peak_q = 0;   // output peak-hold: read + reset
+            uint32_t ocl = g_out_clip;   g_out_clip   = 0;   // DAC-output clip count: read + reset
+            uint32_t icl = g_in_clip;    g_in_clip    = 0;   // ADC-input clip count: read + reset
+            float out_db = opk > 0 ? 20.0f * log10f((float)opk / 2147483648.0f) : -99.0f;
+            printf("comp in %6.1f dBFS   GR %5.1f dB   out %6.1f dBFS   clip[ADC %lu DAC %lu]%s\n",
+                   (double)in, (double)gr, (double)out_db,
+                   (unsigned long)icl, (unsigned long)ocl,
+                   (icl || ocl) ? "  *** CLIP ***" : "");
             fflush(stdout);
         }
 #endif

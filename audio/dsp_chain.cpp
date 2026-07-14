@@ -231,12 +231,14 @@ float dsp_chain_comp_in_db(void) {
 // it at an SD-parsed table (see audio/tt_store).
 // ---------------------------------------------------------------------------
 static const Preset s_builtin[] = {
-    // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out
-    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed.
-    { "default",          NULL,         true, false, true, true, 0.30f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -20, 2.0f, 20, 200,  3,  0.80f },
-    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.30f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -16, 3.5f, 22, 300,  6,  0.70f },
-    // garrison (active pre-amp): EQ on by default — gentle warmth + de-honk scoop + top roll-off
-    { "garrison",         "garrison",   true, true,  true, true, 0.30f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -18, 3.0f, 20, 250,  5,  0.70f },
+    // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out    pga
+    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed. pga 12 = passive K&K.
+    { "default",          NULL,         true, false, true, true, 0.30f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -20, 2.0f, 20, 200,  3,  0.80f, 12 },
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.30f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -16, 3.5f, 22, 300,  6,  0.70f, 12 },
+    // garrison (active pre-amp): pga 0 — the active preamp is so hot the codec PGA is floored; the op-amp
+    // daughter's fixed +6 dB is the only analog gain left. in.level 1.20 + comp.thr -22 recover level and
+    // re-engage the comp digitally; out.level 0.85 leaves DAC headroom for pick-attack transients (dialed 2026-07-12).
+    { "garrison",         "garrison",   true, true,  true, true, 1.20f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -22, 3.0f, 20, 250,  5,  0.85f,  0 },
 };
 #define N_BUILTIN ((int)(sizeof(s_builtin) / sizeof(s_builtin[0])))
 
@@ -259,6 +261,9 @@ const char *dsp_chain_preset_name(int idx)   { return (idx >= 0 && idx < s_n_pre
 const char *dsp_chain_preset_ir(int idx) {
     const char *ir = (idx >= 0 && idx < s_n_presets) ? s_presets[idx].ir : NULL;
     return ir ? ir : "";
+}
+int dsp_chain_preset_pga(int idx) {
+    return (idx >= 0 && idx < s_n_presets) ? s_presets[idx].pga : -1;   // <0 = leave PGA unchanged
 }
 
 int dsp_chain_find_preset(const char *name) {
@@ -349,8 +354,8 @@ static void chain_help(void) {
            "  ir [name|none]          select IR: a name (tanglewood/garrison/an SD .wav), none=off,\n"
            "                          on=re-engage; no arg shows current + lists options\n"
            "  tuner on|off            guitar tuner (UART needle; dry monitor)\n"
-           "  meter on|off            live compressor gain-reduction readout (~1/s)\n"
-           "  dump                    list all stages + params\n"
+           "  meter on|off            live level meter: comp in / GR / output dBFS / ADC+DAC clip (~1/s)\n"
+           "  dump                    app/codec settings (pga, ir, preset...) + all stages + params\n"
            "  stats                   block / timing counters\n"
            "  help                    this\n");
 }

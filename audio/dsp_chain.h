@@ -81,11 +81,14 @@ typedef struct {
     float lo_f, lo_g, mid_f, mid_g, mid_q, hi_f, hi_g;
     float thr, ratio, att, rel, mkup;
     float out_level;
+    int   pga;                            // ES8388 input PGA gain in dB (0..24, 3 dB steps); <0 = leave PGA
+                                          // unchanged on load. Passive K&K wants ~12; active Garrison ~6.
 } Preset;
 
 int         dsp_chain_preset_count(void);
 const char *dsp_chain_preset_name(int idx);
 const char *dsp_chain_preset_ir(int idx);              // IR ref for preset idx ("" if none)
+int         dsp_chain_preset_pga(int idx);            // ES8388 PGA dB for preset idx (<0 = leave unchanged)
 int         dsp_chain_find_preset(const char *name);   // -1 if not found
 // Apply preset idx (sets every stage's params + enables, marks them dirty).
 // Returns 0 on success, -1 on bad index. The host reads dsp_chain_preset_ir(idx)

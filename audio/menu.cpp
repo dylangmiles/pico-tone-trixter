@@ -7,16 +7,16 @@
 
 #include <stdio.h>
 
-enum { M_STAGES, M_PARAMS, M_EDIT, M_PRESET, M_IR };
+enum { M_STAGES, M_PARAMS, M_EDIT, M_PRESET, M_IR, M_PGA };
 
 static int s_mode  = M_STAGES;
-static int s_sel   = 0;   // selected row at the main level (0=back, 1=Preset, 2=IR, 3=GR meter, 4+=stage)
+static int s_sel   = 0;   // main-level row (0=back, 1=Preset, 2=IR, 3=GR meter, 4=PGA, 5+=stage)
 static int s_stage = 0;   // entered stage (PARAMS / EDIT levels)
 static int s_item  = 0;   // selected item in PARAMS: 0 = "< back", 1 = enable, 2+ = param[item-2]
 static int s_pick  = 0;   // selected entry in the PRESET / IR picker
 static bool s_go_home = false;  // set when "< back" clicked at MAIN; consumed by menu_take_home()
 
-#define N_SPECIAL 4       // main-level rows before the stages: back, Preset, IR, GR meter
+#define N_SPECIAL 5       // main-level rows before the stages: back, Preset, IR, GR meter, PGA
 #define VIS_ROWS  7       // visible list rows below the title (8 text rows total, row 0 = title)
 
 void menu_init(void) { s_mode = M_STAGES; s_sel = 0; s_stage = 0; s_item = 0; s_pick = 0; s_go_home = false; }
@@ -43,6 +43,7 @@ bool menu_event(int turn, bool click) {
             else if (s_sel == 1) { s_mode = M_PRESET; s_pick = app_preset_current(); }
             else if (s_sel == 2) { s_mode = M_IR;     s_pick = app_ir_current(); }
             else if (s_sel == 3) { app_gr_set(!app_gr_enabled()); }   // toggle home GR meter in place
+            else if (s_sel == 4) { s_mode = M_PGA; }                  // ES8388 input PGA gain (op-amp/JFET)
             else                 { s_mode = M_PARAMS; s_stage = s_sel - N_SPECIAL; s_item = 0; }
         }
         return turn || click;
@@ -59,6 +60,12 @@ bool menu_event(int turn, bool click) {
         int n = app_ir_count();
         if (turn) { s_pick += turn; clamp(&s_pick, n); }
         if (click) { app_ir_select(s_pick); s_mode = M_STAGES; }
+        return turn || click;
+    }
+
+    if (s_mode == M_PGA) {                             // ES8388 input PGA gain (codec, live)
+        if (turn)  app_pga_set_nib(app_pga_nib() + turn);   // ±3 dB per detent, clamped in the hook
+        if (click) s_mode = M_STAGES;
         return turn || click;
     }
 
@@ -131,6 +138,7 @@ void menu_render(void) {
             else if (it == 1) snprintf(line, sizeof line, "P: %s",  app_preset_name(app_preset_current()));
             else if (it == 2) snprintf(line, sizeof line, "IR:%s",  app_ir_name(app_ir_current()));
             else if (it == 3) snprintf(line, sizeof line, "GR meter  %s", app_gr_enabled() ? "on" : "off");
+            else if (it == 4) snprintf(line, sizeof line, "%-8s  +%d dB", "PGA", app_pga_db());
             else {
                 Stage *st = dsp_chain_stage(it - N_SPECIAL);
                 // value column at char 10, aligned with the "GR meter  <on/off>" row above
@@ -142,6 +150,12 @@ void menu_render(void) {
         picker("-- PRESET --", app_preset_count(), s_pick, app_preset_name, app_preset_current());
     } else if (s_mode == M_IR) {
         picker("-- IR --", app_ir_count(), s_pick, app_ir_name, app_ir_current());
+    } else if (s_mode == M_PGA) {
+        oled_text(0, 0, "-- PGA --");
+        snprintf(line, sizeof line, "+%d dB", app_pga_db());
+        oled_text(0, 26, line);
+        oled_text(0, 42, "12=opamp 18=jfet");
+        oled_text(0, 56, "turn=adj click=ok");
     } else if (s_mode == M_PARAMS) {
         Stage *st = dsp_chain_stage(s_stage);
         snprintf(line, sizeof line, "-- %s --", st->name);

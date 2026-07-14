@@ -16,6 +16,9 @@
 #   eq.hi:      [freq_Hz, gain_dB]           high shelf
 #   comp:       [thresh_dB, ratio, attack_ms, release_ms, makeup_dB]
 #   out.level:  final output level, ~0.0..1.0
+#   pga:        ES8388 input PGA gain in dB (0..24, 3 dB steps), set when this preset
+#               loads. Passive K&K ~12; active Garrison ~6 (its preamp is hot — +12 clips
+#               the ADC on hard strums). Omit to inherit the default (12).
 #
 # This file reproduces the firmware's three built-in presets. Edit freely —
 # the pedal reads it on boot; type `sdreload` over UART to re-read without a
@@ -35,6 +38,7 @@ eq.mid: [700, 0.0, 1.0]
 eq.hi: [3500, 0.0]
 comp: [-20, 2.0, 20, 200, 3]
 out.level: 0.80
+pga: 12
 
 ---
 
@@ -50,6 +54,7 @@ eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
 comp: [-16, 3.5, 22, 300, 6]
 out.level: 0.70
+pga: 12
 
 ---
 
@@ -59,9 +64,10 @@ in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 0.30
+in.level: 1.20
 eq.lo: [120, 2.0]
 eq.mid: [1000, -2.5, 1.0]
 eq.hi: [3500, -1.5]
-comp: [-18, 3.0, 20, 250, 5]
-out.level: 0.70
+comp: [-22, 3.0, 20, 250, 5]
+out.level: 0.85
+pga: 0

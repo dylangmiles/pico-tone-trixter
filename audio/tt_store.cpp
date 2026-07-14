@@ -172,6 +172,7 @@ static void parse_presets(char *buf) {
                 else if (strcmp(k, "out.on") == 0)    cur.out_on  = parse_bool(v);
                 else if (strcmp(k, "in.level") == 0)  cur.in_level  = strtof(v, NULL);
                 else if (strcmp(k, "out.level") == 0) cur.out_level = strtof(v, NULL);
+                else if (strcmp(k, "pga") == 0)       cur.pga = (int)strtol(v, NULL, 10);   // ES8388 PGA dB (K&K 12, Garrison 6)
                 else if (strcmp(k, "eq.lo") == 0)  { int c = parse_list(v, a, 2); if (c>=1) cur.lo_f=a[0]; if (c>=2) cur.lo_g=a[1]; }
                 else if (strcmp(k, "eq.mid") == 0) { int c = parse_list(v, a, 3); if (c>=1) cur.mid_f=a[0]; if (c>=2) cur.mid_g=a[1]; if (c>=3) cur.mid_q=a[2]; }
                 else if (strcmp(k, "eq.hi") == 0)  { int c = parse_list(v, a, 2); if (c>=1) cur.hi_f=a[0]; if (c>=2) cur.hi_g=a[1]; }
