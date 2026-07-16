@@ -16,6 +16,10 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap   # generates /sitemap.xml (+ robots.txt) for Google Search Console
 
+# Search Console HTML-tag verification — jekyll-seo-tag emits the
+# <meta name="google-site-verification"> tag in every page's <head>.
+google_site_verification: JaFouvFuKEnFRojpttTpXpunyvV97YzRMqqS0eay-qw
+
 # Posts are a folder-per-episode collection (each with co-located assets),
 # rather than the flat _posts convention.
 collections:
