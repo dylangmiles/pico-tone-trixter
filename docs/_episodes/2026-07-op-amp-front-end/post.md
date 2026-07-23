@@ -83,8 +83,8 @@ Four things decide this front end: **headroom, distortion, hiss, hum.**
 
 | | Headroom | Distortion | Hiss | Mains hum |
 |---|:---:|:---:|:---:|:---:|
-| **JFET** | ✅ | ✅ | ✅ | — |
-| **Op-amp** | — | — | — | ✅ *(fixable)* |
+| **JFET** | ✅ | ✅ | ✅ | ✗ *(fixable)* |
+| **Op-amp** | — | — | — | ✅ |
 
 The JFET — the part I set out to *replace* — wins three of the four. The op-amp takes only the hum, and that one's a grounding problem I can design out. I built Plan B certain it was the answer, and the measurements walked me straight back to Plan A, understood far better than when I left it.
 
