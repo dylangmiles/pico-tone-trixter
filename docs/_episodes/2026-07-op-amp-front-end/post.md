@@ -45,6 +45,20 @@ I'd assumed the buffer set the top of that window. So I measured where the conve
 
 That reframed everything. The front end isn't one component doing a job; it's a chain — pickup, buffer, gain stage, converter — and the signal only gets through clean when every link lines up. Ducks in a row. Worse, the op-amp's +6 dB of gain — the thing I'd been so pleased with — *shrinks* the window: it hands the converter a hotter signal, so it clips **sooner**. The gain I'd added was working against me.
 
+## The Same Tap, Two Ways
+
+Here's what that looks like on the bench. Same gesture through each front end — a knuckle-tap on the guitar body, the sort of percussion players do without thinking. Green is the pickup going in; the other trace is what the front end sends on.
+
+![Op-amp output on a body-tap: the trace is slammed flat against both supply rails — 5.24 V peak-to-peak on a 5 V rail. The peaks aren't loud, they're *gone*, chopped off into crackle. That's hard clipping.](assets/opamp-rails-on-tap.png)
+
+![The JFET, the identical tap: the output (white) simply rides along with the input (green), 1.7 V peak-to-peak, nowhere near a rail. It tracks the transient instead of chopping it.](assets/jfet-tracks-tap.png)
+
+And the loudest thing I could throw at it — a very hard thumb strum — the JFET still holds together, easing the biggest peaks down gently instead of slamming them flat:
+
+![A very hard thumb strum through the JFET: the tallest peaks compress smoothly rather than clipping — soft, musical limiting, the kind you barely notice, not the crackle of a railed op-amp.](assets/jfet-hard-strum.png)
+
+That's the headroom column of the scorecard, in three pictures — and it's the part that surprised me most, because it's the *cheaper* part doing the better job.
+
 ## The Op-Amp's Dirty Secret
 
 Then the buffer itself gave something away. Feeding it a clean test tone, the output came back visibly lopsided — nearly **9% distortion**, at small, quiet signal levels where nothing should be straining.
