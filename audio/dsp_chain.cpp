@@ -354,7 +354,7 @@ static void chain_help(void) {
            "  <stage> on|off          enable/bypass stage (in, eq, comp, out)\n"
            "  preset [name]           list presets, or load one (switches IR too)\n"
            "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
-           "  bypass on|off           kill IR+EQ+Dynamics (output level only)\n"
+           "  bypass on|off           raw ADC->DAC: only out.level applies (IR/EQ/comp/in.level all off)\n"
            "  ir [name|none]          select IR: a name (tanglewood/garrison/an SD .wav), none=off,\n"
            "                          on=re-engage; no arg shows current + lists options\n"
            "  tuner on|off            guitar tuner (UART needle; dry monitor)\n"
