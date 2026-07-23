@@ -47,11 +47,11 @@ That reframed everything. The front end isn't one component doing a job; it's a 
 
 ## The Same Tap, Two Ways
 
-Here's what that looks like on the bench. Same gesture through each front end — a knuckle-tap on the guitar body, the sort of percussion players do without thinking. Green is the pickup going in; the other trace is what the front end sends on.
+Here's what that looks like on the bench. A hard tap on the guitar body through each front end — the sort of percussion players do without thinking. Green is the pickup going in; the other trace is what the front end sends on.
 
-![Op-amp output on a body-tap: the trace is slammed flat against both supply rails — 5.24 V peak-to-peak on a 5 V rail. The peaks aren't loud, they're *gone*, chopped off into crackle. That's hard clipping.](assets/opamp-rails-on-tap.png)
+![Op-amp output on a hard body-tap, 3.0 V peak-to-peak going in: the trace is slammed flat against both supply rails — 5.24 V peak-to-peak on a 5 V rail. The peaks aren't loud, they're *gone*, chopped off into crackle. That's hard clipping.](assets/opamp-rails-on-tap.png)
 
-![The JFET, the identical tap: the output (white) simply rides along with the input (green), 1.7 V peak-to-peak, nowhere near a rail. It tracks the transient instead of chopping it.](assets/jfet-tracks-tap.png)
+![The JFET fed an even *harder* tap — 4.6 V peak-to-peak going in, against the op-amp's 3.0 — and its output still stays bounded at 2.6 V pp, the biggest peak eased down instead of chopped off. More energy in, less chaos out.](assets/jfet-harder-tap.png)
 
 And the loudest thing I could throw at it — a very hard thumb strum — the JFET still holds together, easing the biggest peaks down gently instead of slamming them flat:
 
