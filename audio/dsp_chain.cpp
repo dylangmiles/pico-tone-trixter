@@ -234,7 +234,11 @@ static const Preset s_builtin[] = {
     // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out    pga
     // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed. pga 12 = passive K&K.
     { "default",          NULL,         true, false, true, true, 0.30f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -20, 2.0f, 20, 200,  3,  0.80f, 12 },
-    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.30f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -16, 3.5f, 22, 300,  6,  0.70f, 12 },
+    // tanglewood-slide (passive K&K via OPA1642 op-amp daughter): pga 6 — the op-amp's fixed +6 dB
+    // ahead of the ADC lets the codec PGA drop to +6 dB with the front end clean (0 ADC clips). in.level
+    // 0.90 + comp.thr -22 feed the comp near full scale; att 18 catches pick transients; out.level 0.70
+    // keeps DAC headroom (0 DAC clips on hard strums). Dialed on the op-amp daughter 2026-07-19.
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.90f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -22, 3.5f, 18, 300,  6,  0.70f,  6 },
     // garrison (active pre-amp): pga 0 — the active preamp is so hot the codec PGA is floored; the op-amp
     // daughter's fixed +6 dB is the only analog gain left. in.level 1.20 + comp.thr -22 recover level and
     // re-engage the comp digitally; out.level 0.85 leaves DAC headroom for pick-attack transients (dialed 2026-07-12).

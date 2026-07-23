@@ -42,19 +42,22 @@ pga: 12
 
 ---
 
+# tanglewood-slide — passive K&K via the OPA1642 op-amp daughter (dialed 2026-07-19).
+# Op-amp's fixed +6 dB ahead of the ADC lets pga drop to 6 with the front end clean;
+# in.level 0.90 + comp -22 feed the comp near full scale, out.level 0.70 keeps DAC headroom.
 name: tanglewood-slide
 ir: tanglewood.wav
 in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 0.30
+in.level: 0.90
 eq.lo: [150, 3.0]
 eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
-comp: [-16, 3.5, 22, 300, 6]
+comp: [-22, 3.5, 18, 300, 6]
 out.level: 0.70
-pga: 12
+pga: 6
 
 ---
 
