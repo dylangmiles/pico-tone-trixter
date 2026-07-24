@@ -119,11 +119,17 @@ The JFET is the front end. That's not where I expected this to land, and it's ex
 
 The levels are now re-tuned around it: every preset dialled on the bench for both the passive K&K and the hot active pickup, the codec's gain pinned at zero for good, and all the make-up moved to *after* the converter where it costs nothing. Along the way the compressor had to learn a job it never used to do — the converter's clipping had been quietly acting as the peak limiter all along, and taking that away meant the compressor had to actually catch the transients itself.
 
-There's a number attached to all of this. Back in May, boxed up and running off a battery, the whole chain managed about **28 dB** of usable range — from the loudest thing it would accept, down to its own hiss. Measured properly now, with a soundcard instead of a scope that couldn't see that far down, it's **51 dB**.
+There's a number attached to all of this, and it's the one I've been chasing since the first breadboard.
 
-That sounds like a victory over noise. It isn't. Only about **3 dB** of it came from the pedal actually getting quieter — the other **19 dB** came from *headroom*, from no longer throwing away most of the converter's range before the signal even arrived. Which is the same lesson as everywhere else in this episode: the win was in where things sat, not in what they were made of.
+![Signal-to-noise across the whole build, as a bar chart. It starts deep below the zero line at −46 dB on the breadboard, where clock crosstalk made the noise louder than the guitar. It climbs to +10 dB on the first prototype, +30 dB once the pedal was in a shielded box on a battery, and +51 dB now that the front end is measured and staged properly. A dashed outline at ~80 dB marks the circuit-board target still to come.](assets/snr-journey.png)
 
-Strip out the mains hum that the shielding is meant to deal with, and the same measurement already reads about **70 dB**. That's the next number to go and earn.
+Back in May, boxed up and running off a battery, the pedal measured **30 dB**. Today it measures **51 dB.**
+
+Two honest footnotes on that jump. The first is that the May number was taken a slightly different way — signal against noise at one particular playing level, rather than the full range from the loudest thing the chain accepts down to its own hiss. Put on the same footing as everything since, May comes out at **28 dB**, so the real gap is a touch *wider* than the chart shows.
+
+The second matters more. That improvement sounds like a victory over noise, and it isn't. Only about **3 dB** of it came from the pedal actually getting quieter. The other **19 dB** came from *headroom* — from no longer throwing away most of the converter's range before the signal even arrived. Which is the same lesson as everywhere else in this episode: the win was in where things sat, not in what they were made of.
+
+Strip out the mains hum that the shielding is meant to deal with, and the same measurement already reads about **70 dB**. That's the next number to go and earn — and it puts the dashed bar on that chart within reach of a board I haven't built yet.
 
 Next: rebuild the JFET daughter board *properly* — a wider supply rail for margin, a corrected bias for symmetric headroom, and shielding for that mains pickup. Quite possibly on the first real circuit board of the project. Same needle; steadier hands.
 
