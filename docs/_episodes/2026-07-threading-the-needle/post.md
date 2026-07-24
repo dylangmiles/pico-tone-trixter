@@ -119,6 +119,12 @@ The JFET is the front end. That's not where I expected this to land, and it's ex
 
 The levels are now re-tuned around it: every preset dialled on the bench for both the passive K&K and the hot active pickup, the codec's gain pinned at zero for good, and all the make-up moved to *after* the converter where it costs nothing. Along the way the compressor had to learn a job it never used to do — the converter's clipping had been quietly acting as the peak limiter all along, and taking that away meant the compressor had to actually catch the transients itself.
 
+There's a number attached to all of this. Back in May, boxed up and running off a battery, the whole chain managed about **28 dB** of usable range — from the loudest thing it would accept, down to its own hiss. Measured properly now, with a soundcard instead of a scope that couldn't see that far down, it's **51 dB**.
+
+That sounds like a victory over noise. It isn't. Only about **3 dB** of it came from the pedal actually getting quieter — the other **19 dB** came from *headroom*, from no longer throwing away most of the converter's range before the signal even arrived. Which is the same lesson as everywhere else in this episode: the win was in where things sat, not in what they were made of.
+
+Strip out the mains hum that the shielding is meant to deal with, and the same measurement already reads about **70 dB**. That's the next number to go and earn.
+
 Next: rebuild the JFET daughter board *properly* — a wider supply rail for margin, a corrected bias for symmetric headroom, and shielding for that mains pickup. Quite possibly on the first real circuit board of the project. Same needle; steadier hands.
 
 ---
