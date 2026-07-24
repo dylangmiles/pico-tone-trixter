@@ -3,7 +3,7 @@ title: "Threading the Needle: The Front End That Fought Back"
 subtitle: "I built a fancier buffer certain it would win. Then I measured it."
 episode: 4
 date: 2026-07-24
-permalink: /episodes/2026-07-threading-the-needle-1/
+permalink: /episodes/2026-07-the-front-end-that-fought-back/
 image:
   path: /assets/og/og-episode-4.jpg
   width: 1200
