@@ -41,27 +41,29 @@ eq.lo: [120, 0.0]
 eq.mid: [700, 0.0, 1.0]
 eq.hi: [3500, 0.0]
 comp: [-18, 3.0, 1, 250, 6]
-out.level: 0.70
+out.level: 0.60
 pga: 0
 
 ---
 
-# tanglewood-slide — passive K&K via the JFET daughter, restaged for pga 0 (2026-07-24).
-# The JFET's x0.84 puts the ADC ceiling at 1.60 V at TSin: a hard strum (1.24 V) clears it
-# with 2.2 dB spare, so only body taps clip. in.level holds the comp-input PEAK; comp.thr
-# and makeup carry the sustain that the old pre-ADC gain used to supply.
+# tanglewood-slide — passive K&K via the JFET daughter, pga 0. STARTING POINT ONLY, not yet
+# dialed on the K&K. These are the Garrison's MEASURED values: same front end, same pga 0,
+# similar ADC peak and IR transient gain, so they should land in the right area. Unlike the
+# Garrison the K&K has NO volume control (no free SNR from a preamp knob) and its worst case
+# is the BODY TAP, not the strum — a knuckle tap is +1.7 dB over the ADC ceiling and will
+# clip no matter what the DSP does.
 name: tanglewood-slide
 ir: tanglewood.wav
 in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 1.15
+in.level: 0.75
 eq.lo: [150, 3.0]
 eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
-comp: [-34, 3.5, 12, 300, 18]
-out.level: 0.65
+comp: [-28, 4.0, 1, 300, 16]
+out.level: 0.50
 pga: 0
 
 ---

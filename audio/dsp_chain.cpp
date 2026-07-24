@@ -290,10 +290,32 @@ static const Preset s_builtin[] = {
     //   edge through to the DAC. Anything inheriting from here must inherit a fast attack.
     // Predicted dry, K&K or Garrison at their reference level (ADC peak ~-2.5 dBFS): comp-in -2.5,
     // GR ~10 dB, out ~-10 dBFS, ~10 dB of DAC margin. To be confirmed on both guitars.
-    { "default",          NULL,         true, false, true, true, 1.00f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -18, 3.0f,  1, 250,  6,  0.70f,  0 },
+    // Confirmed on the Garrison 2026-07-24 (preamp 3/4, dry): comp-in peak -1.1 dBFS, GR -5..-7,
+    // out peak -4.0, clip[ADC 0 DAC 0]. out.level 0.70 -> 0.60 because that take was still ~5 dB
+    // under the hardest recorded strum (+4.2 comp-in), which extrapolates to out ~-2 dBFS. 1.3 dB is
+    // cheap insurance on the preset every partial SD preset inherits from. To re-confirm on the K&K.
+    { "default",          NULL,         true, false, true, true, 1.00f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -18, 3.0f,  1, 250,  6,  0.60f,  0 },
     // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
     // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
-    { "tanglewood-slide", "tanglewood", true, true,  true, true, 1.15f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -34, 3.5f, 12, 300, 18,  0.65f,  0 },
+    //
+    // STARTING POINT ONLY — not yet dialed on the K&K (that session is next). These are the Garrison's
+    // MEASURED values, not fresh arithmetic, because the two share a front end: same JFET daughter,
+    // same pga 0, similar ADC peak (K&K hard strum -2.25 dBFS vs Garrison -2.5), and the body IRs have
+    // similar transient gain (~+9 dB), so in.level 0.75 should land comp-in near the +4 dBFS that
+    // worked on the Garrison. The previous values here (in.level 1.15, thr -34, att 12, makeup 18)
+    // were first-pass arithmetic of exactly the kind the Garrison session disproved -- derived by
+    // restoring the old RMS through the ADC, which had been ~11.7 dB into clipping at the old pga 6.
+    // Predicted comp-in ~+8 dBFS with those, which would have clipped the DAC on the first strum.
+    //
+    // Expect these to need work anyway, in a direction the Garrison cannot predict:
+    //  - NO volume control. The K&K is passive, so the +8.4 dB of free SNR the Garrison got from its
+    //    preamp knob is not available. in.level and the comp carry everything.
+    //  - Its worst case is the BODY TAP, not the strum (the reverse of the Garrison): 1.96 V knuckle
+    //    tap is +1.7 dB over the ADC ceiling and a bridge tap +4.9..+7.0 dB over. Those WILL clip the
+    //    converter and no digital setting can prevent it -- it is pad-or-accept.
+    //  - Slide playing is sustained and gentle, so this preset's material sits far below the peaks
+    //    that set the staging.
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.75f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -28, 4.0f,  1, 300, 16,  0.50f,  0 },
     // garrison (active pre-amp) — DIALED AT THE BENCH 2026-07-24 on the JFET daughter at pga 0.
     //
     // *** REFERENCE CONDITION: guitar preamp at 3/4. *** Record it with any Garrison measurement or
