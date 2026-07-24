@@ -46,12 +46,11 @@ pga: 0
 
 ---
 
-# tanglewood-slide — passive K&K via the JFET daughter, pga 0. STARTING POINT ONLY, not yet
-# dialed on the K&K. These are the Garrison's MEASURED values: same front end, same pga 0,
-# similar ADC peak and IR transient gain, so they should land in the right area. Unlike the
-# Garrison the K&K has NO volume control (no free SNR from a preamp knob) and its worst case
-# is the BODY TAP, not the strum — a knuckle tap is +1.7 dB over the ADC ceiling and will
-# clip no matter what the DSP does.
+# tanglewood-slide — passive K&K via the JFET daughter, pga 0. Dialed 2026-07-24: over a full
+# slide passage GR runs -6..-14 dB and never hits 0, comp in -5..-17 dBFS comes out -7..-13,
+# zero ADC and DAC clips. NO PAD NEEDED — the K&K's worst case (very hard bridge tap) measures
+# 0.0 dBFS at the ADC with zero clips. Its hiss is higher than the garrison preset's, and that
+# is the IR (flat, passes broadband noise), not the front end — no digital gain can fix it.
 name: tanglewood-slide
 ir: tanglewood.wav
 in.on: 1
@@ -63,7 +62,7 @@ eq.lo: [150, 3.0]
 eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
 comp: [-28, 4.0, 1, 300, 16]
-out.level: 0.50
+out.level: 0.65
 pga: 0
 
 ---

@@ -308,24 +308,33 @@ static const Preset s_builtin[] = {
     // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
     // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
     //
-    // STARTING POINT ONLY — not yet dialed on the K&K (that session is next). These are the Garrison's
-    // MEASURED values, not fresh arithmetic, because the two share a front end: same JFET daughter,
-    // same pga 0, similar ADC peak (K&K hard strum -2.25 dBFS vs Garrison -2.5), and the body IRs have
-    // similar transient gain (~+9 dB), so in.level 0.75 should land comp-in near the +4 dBFS that
-    // worked on the Garrison. The previous values here (in.level 1.15, thr -34, att 12, makeup 18)
-    // were first-pass arithmetic of exactly the kind the Garrison session disproved -- derived by
-    // restoring the old RMS through the ADC, which had been ~11.7 dB into clipping at the old pga 6.
-    // Predicted comp-in ~+8 dBFS with those, which would have clipped the DAC on the first strum.
+    // DIALED ON THE K&K 2026-07-24, and it is the only preset today whose first pass landed --
+    // because its starting values were the Garrison's MEASURED numbers rather than fresh arithmetic
+    // (shared front end: same JFET daughter, same pga 0, similar ADC peak). Only out.level moved,
+    // 0.50 -> 0.65, because the builder wanted "a touch louder". Everything else is untouched.
+    // The values this replaced (in.level 1.15, thr -34, att 12, makeup 18) were first-pass arithmetic
+    // of exactly the kind the Garrison session disproved -- derived by restoring the old RMS through
+    // the ADC, which had been ~11.7 dB into clipping at the old pga 6. They predicted comp-in ~+8 dBFS
+    // and would have clipped the DAC on the first strum.
     //
-    // Expect these to need work anyway, in a direction the Garrison cannot predict:
-    //  - NO volume control. The K&K is passive, so the +8.4 dB of free SNR the Garrison got from its
-    //    preamp knob is not available. in.level and the comp carry everything.
-    //  - Its worst case is the BODY TAP, not the strum (the reverse of the Garrison): 1.96 V knuckle
-    //    tap is +1.7 dB over the ADC ceiling and a bridge tap +4.9..+7.0 dB over. Those WILL clip the
-    //    converter and no digital setting can prevent it -- it is pad-or-accept.
-    //  - Slide playing is sustained and gentle, so this preset's material sits far below the peaks
-    //    that set the staging.
-    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.75f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -28, 4.0f,  1, 300, 16,  0.50f,  0 },
+    // Measured over a full slide passage: GR -6..-14 dB and NEVER 0 (the comp rides the level all the
+    // way through rather than only catching attacks -- what a slide preset is for), comp in swinging
+    // -5..-17 dBFS comes out -7..-13, peak comp in -1.8 -> out -6.3 dBFS, clip[ADC 0 DAC 0] over the
+    // whole take. At out.level 0.65 that peak sits ~-4.0 dBFS, matching the Garrison's margin.
+    //
+    // Two K&K-specific facts, both the OPPOSITE of what was expected going in:
+    //  - **No pad needed.** Its worst case (very hard bridge tap) measures 0.0 dBFS at the ADC with
+    //    ZERO clips -- 4.9..7.0 dB better than the headroom session predicted. Probably the JFET's
+    //    asymmetric window soft-limiting the positive half at +1.2 V before the converter sees it.
+    //    Body taps still clip the DAC by a handful of samples here (inaudible, accepted).
+    //  - **The IR, not the front end, sets the hiss.** Output noise floor -42.5 dBFS vs the
+    //    Garrison's -49.4 at identical in.level/makeup/out.level, even though the ADC noise floor
+    //    measures the same for both guitars (~-53..-55 dBFS on `default`). Back-derived: the
+    //    tanglewood IR is +3 dB on transients and +3.5 dB on broadband noise (flat, passes hiss); the
+    //    garrison IR is +9 dB on transients and -2 dB on noise (peaky, suppresses it). No digital
+    //    gain can fix this -- in.level/makeup move signal and noise together. Levers are gate-node
+    //    shielding or acceptance. Builder finds it noticeable but acceptable.
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.75f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -28, 4.0f,  1, 300, 16,  0.65f,  0 },
     // garrison (active pre-amp) — DIALED AT THE BENCH 2026-07-24 on the JFET daughter at pga 0.
     //
     // *** REFERENCE CONDITION: guitar preamp at 3/4. *** Record it with any Garrison measurement or
