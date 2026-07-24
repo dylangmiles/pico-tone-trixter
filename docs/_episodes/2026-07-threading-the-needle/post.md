@@ -2,11 +2,10 @@
 title: "Threading the Needle: The Front End That Fought Back"
 subtitle: "I built a fancier buffer certain it would win. Then I measured it."
 episode: 4
-date: 2026-07-23
-published: false   # DRAFT — reframed around the JFET-wins twist; publish after the K&K tune + photos/video
+date: 2026-07-24
 permalink: /episodes/2026-07-threading-the-needle/
 image:
-  path: /assets/og/og-episode-3.jpg
+  path: /assets/og/og-episode-4.jpg
   width: 1200
   height: 630
 ---
@@ -88,11 +87,39 @@ Four things decide this front end: **headroom, distortion, hiss, hum.**
 
 The JFET — the part I set out to *replace* — wins three of the four. The op-amp takes only the hum, and that one's a grounding problem I can design out. I built Plan B certain it was the answer, and the measurements walked me straight back to Plan A, understood far better than when I left it.
 
+## Where the Gain Goes
+
+That last result had a corollary, and it took another session at the bench to find it.
+
+If turning up the codec's own gain buys no quiet — because the noise rides up with the signal — then it looks like nothing can improve the noise floor except a better buffer. That's true of every gain control *inside* the pedal. It isn't true of the one that sits outside it.
+
+The active-pickup guitar has its own volume knob, and that knob sits ahead of the pedal's entire front end: ahead of the buffer, ahead of the converter, ahead of the place the noise is actually born. Turn it up and the signal rises **without the pedal's noise rising with it.**
+
+![Two ways to add gain, measured. Turning the guitar up added 10.4 dB of signal but only 2.1 dB of noise — a real 8.4 dB improvement. Turning the codec's gain up added 18.0 dB of signal and 17.4 dB of noise — 0.6 dB, which is nothing. The difference is that the guitar's volume sits before the noise source and the codec's gain sits after it.](assets/where-the-gain-goes.png)
+
+Going from half to three-quarters put **10.4 dB more signal in and only 2.1 dB more noise** — a real **8.4 dB of signal-to-noise, free.** That is more than the entire difference between the two buffers I'd spent this whole episode comparing. Past three-quarters it buys another 2 dB and starts clipping the converter, so three-quarters is where it lives now.
+
+It's one of the oldest rules in audio — get your level early, before anything has had a chance to add noise — and I'd spent weeks trying to buy it with the wrong knob.
+
+## And the Needle?
+
+The number that started all this was 1.35 volts, where the converter clips. The thing that was supposed to blow straight through it was a hard tap on the guitar body — nearly two volts on the passive K&K, with half a volt of overshoot and nowhere to put it.
+
+So with the JFET in place and the codec's gain at zero, I went back and measured the most violent thing this pickup ever sees: a very hard tap right by the bridge.
+
+It lands at **exactly full scale. Not one clipped sample.**
+
+The window turned out to be precisely wide enough. Not by design — by measurement, after a wrong turn and back again.
+
+There's a twist in that, though. The JFET's bias is *wrong*: it sits higher than it should, which quietly squashes the positive half of a big transient before the converter ever sees it. That defect is on my list to correct. It also appears to be exactly what's saving those taps. So "fixing" it might cost me the thing I just measured — which is a strange and slightly funny place to end up, and a reason to put a scope on it before I reach for the soldering iron.
+
 ## Where We Are
 
 The JFET is the front end. That's not where I expected this to land, and it's exactly why you measure instead of assume — the fancy part isn't automatically the better one, and the ceiling isn't always where you think it is.
 
-Next: re-tune the levels around the JFET for both the passive K&K and a hot active pickup, then rebuild the JFET daughter *properly* — a wider supply rail for margin, a corrected bias for symmetric headroom, and shielding for that mains pickup. Quite possibly on the first real circuit board of the project. Same needle; steadier hands.
+The levels are now re-tuned around it: every preset dialled on the bench for both the passive K&K and the hot active pickup, the codec's gain pinned at zero for good, and all the make-up moved to *after* the converter where it costs nothing. Along the way the compressor had to learn a job it never used to do — the converter's clipping had been quietly acting as the peak limiter all along, and taking that away meant the compressor had to actually catch the transients itself.
+
+Next: rebuild the JFET daughter board *properly* — a wider supply rail for margin, a corrected bias for symmetric headroom, and shielding for that mains pickup. Quite possibly on the first real circuit board of the project. Same needle; steadier hands.
 
 ---
 
