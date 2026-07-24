@@ -46,15 +46,19 @@ That reframed everything. The front end isn't one component doing a job; it's a 
 
 ## The Same Tap, Two Ways
 
-Here's what that looks like on the bench. A hard tap on the guitar body through each front end — the sort of percussion players do without thinking. Green is the pickup going in; the other trace is what the front end sends on.
+Here's what that looks like on the bench. A hard tap on the guitar body through each front end — the sort of percussion players do without thinking. Green is the pickup going in, the pale trace is what the front end sends on, and the red ring marks the instant of the tap.
 
-![Op-amp output on a hard body-tap. Circled: the instant of the tap, where the white output trace slams flat against both supply rails — 5.24 V peak-to-peak on a 5 V rail, from 3.0 V going in. The peaks aren't loud, they're *gone*, chopped off into crackle. That's hard clipping.](assets/opamp-rails-on-tap.png)
+**The op-amp first.** Three volts peak-to-peak going in. What comes out measures **5.24 V pp — on a 5 V rail.** Inside the ring the output isn't a peak at all, it's a flat edge, pinned hard against both supplies. Those peaks aren't loud. They're *gone*, chopped off into crackle.
 
-![The JFET fed an even *harder* tap — 4.6 V peak-to-peak going in, against the op-amp's 3.0. Circled: the same instant, where the green input spikes well past the white output, which stays bounded at 2.6 V pp. The biggest peak is eased down instead of chopped off. More energy in, less chaos out.](assets/jfet-harder-tap.png)
+![Op-amp output on a hard body-tap. Circled: the instant of the tap, where the pale output trace slams flat against both supply rails — 5.24 V peak-to-peak on a 5 V rail, from 3.0 V going in.](assets/opamp-rails-on-tap.png)
+
+**Now the JFET — and I fed it a *harder* tap.** 4.6 V peak-to-peak going in, half as much again as the op-amp got. Its output still comes out bounded, at 2.6 V pp. Inside the ring you can see the green input spiking well past the pale output: the biggest peak eased down rather than chopped off. More energy in, less chaos out.
+
+![The JFET fed a harder tap — 4.6 V peak-to-peak going in, against the op-amp's 3.0. Circled: the same instant, where the green input spikes well past the pale output, which stays bounded at 2.6 V pp.](assets/jfet-harder-tap.png)
 
 And the loudest thing I could throw at it — a very hard thumb strum — the JFET still holds together, easing the biggest peaks down gently instead of slamming them flat:
 
-![A very hard thumb strum through the JFET. Circled: the attack, where the green input's tallest spikes tower over the white output — the peaks compressed smoothly rather than clipped. Soft, musical limiting, the kind you barely notice, not the crackle of a railed op-amp.](assets/jfet-hard-strum.png)
+![A very hard thumb strum through the JFET. Circled: the attack, where the green input's tallest spikes tower over the pale output — the peaks compressed smoothly rather than clipped. Soft, musical limiting, the kind you barely notice, not the crackle of a railed op-amp.](assets/jfet-hard-strum.png)
 
 That's the headroom column of the scorecard, in three pictures — and it's the part that surprised me most, because it's the *cheaper* part doing the better job.
 
