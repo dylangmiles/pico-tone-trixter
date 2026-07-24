@@ -63,16 +63,20 @@ pga: 0
 
 ---
 
+# garrison — active pre-amp, dialed at the bench 2026-07-24 on the JFET daughter at pga 0.
+# *** REFERENCE: guitar preamp at 3/4 *** — the guitar's own volume sits ahead of the whole
+# pedal, so these numbers only hold at that position. 3/4 is the measured optimum: half->3/4
+# buys +8.4 dB of real SNR, 3/4->max only +2.3 dB more and starts clipping the ADC.
 name: garrison
 ir: garrison.wav
 in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 3.00
+in.level: 0.75
 eq.lo: [120, 2.0]
 eq.mid: [1000, -2.5, 1.0]
 eq.hi: [3500, -1.5]
-comp: [-22, 3.0, 14, 250, 5]
-out.level: 0.75
+comp: [-28, 4.0, 1, 250, 16]
+out.level: 0.50
 pga: 0

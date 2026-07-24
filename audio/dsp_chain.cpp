@@ -276,9 +276,56 @@ static const Preset s_builtin[] = {
     // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
     // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
     { "tanglewood-slide", "tanglewood", true, true,  true, true, 1.15f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -34, 3.5f, 12, 300, 18,  0.65f,  0 },
-    // garrison (active pre-amp): pga was already 0, so only the daughter swap moved — in.level absorbs
-    // all 8 dB of it and the comp keeps every number that was dialed by ear on 2026-07-12.
-    { "garrison",         "garrison",   true, true,  true, true, 3.00f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -22, 3.0f, 14, 250,  5,  0.75f,  0 },
+    // garrison (active pre-amp) — DIALED AT THE BENCH 2026-07-24 on the JFET daughter at pga 0.
+    //
+    // *** REFERENCE CONDITION: guitar preamp at 3/4. *** Record it with any Garrison measurement or
+    // the numbers are not reproducible -- the guitar's own volume sits AHEAD of the whole pedal, so a
+    // preset is only valid for one knob position.
+    //
+    // 3/4 is not arbitrary, it is the measured optimum, and how it was found is the one genuinely
+    // counter-intuitive result of the session. The guitar's preamp is the ONLY gain control in the
+    // chain sitting ahead of the pedal's dominant noise sources (JFET gate, ADC), so it is the only
+    // one that improves SNR. Measured at comp in (pre-comp, so comp settings cannot confound it):
+    //
+    //   preamp     comp-in peak   noise floor   SNR       ADC
+    //   half         -6.2 dBFS     -61.8        55.6 dB   clean
+    //   3/4          +4.2          -59.7        63.9 dB   clean      <- here
+    //   near max     +7.8          -58.4        66.2 dB   7 samples clipped
+    //
+    // half -> 3/4 buys +8.4 dB of real SNR (signal +10.4, noise only +2.1); 3/4 -> near max buys just
+    // +2.3 dB more and starts clipping the converter. Diminishing returns land almost exactly on 3/4.
+    // Gain anywhere AFTER the front end -- pga, in.level, comp makeup -- lifts signal and noise
+    // together and can never do this (SNR session Block 3: +18 dB pga -> +17.4 dB noise). So run the
+    // guitar hot, back off only far enough that hard playing stays clean, and make up nothing analog.
+    // At FULL a hard strum reaches 1.27-1.60 V at TSin and clips the ADC properly (51 samples).
+    //
+    // Measured at these values, preamp 3/4: comp in peak +4.2 dBFS (ADC peak -2.5, 2.5 dB of
+    // converter margin), GR -22 on the attack tapering -13 -> -4 -> 0 across the decay, out peak
+    // -3.4 dBFS, clip[ADC 0 DAC 0]. Noise floor -59.7 at comp in, -49.4 at out.
+    // Limiting behaviour verified at near-max preamp: a body tap at comp in +0.1 and a very hard
+    // strum at +7.8 both produced out ~-4.2 dBFS -- +7.7 dB of input, +0.2 dB of output. The comp is
+    // limiting, not just levelling, which is why out.level 0.50 has never produced a DAC clip in any
+    // take (body tap, hard strum, all three preamp positions).
+    // NOTE the Garrison's worst case is the STRUM, not the body tap (the tap came in 7.7 dB lower) --
+    // the opposite of the K&K. Active under-saddle vs soundboard transducer; don't carry the K&K's
+    // "worst case is a body tap" rule across ([[feedback_transient_peak_capture_method]] is about
+    // soundboard piezos specifically).
+    //
+    // How the values got here, since the first pass was wrong in an instructive way:
+    // - in.level 3.00 -> 0.75. The x2.512 "restore the old chain gain" bookkeeping ran THROUGH A
+    //   CLIPPING STAGE: on the op-amp daughter this guitar was ~8 dB into ADC clipping on every hard
+    //   strum, so its peak was pinned at 0 dBFS and did not scale with the daughter swap the way the
+    //   arithmetic assumed. Gain bookkeeping is only valid through linear stages.
+    // - attack 14 -> 1 ms. The ADC used to flatten these transients for free; at 14 ms (and still at
+    //   3) the leading edge escaped the detector and hit the DAC. 1 ms was worth ~3 dB of GR.
+    // - thr -20 -> -28, ratio 6 -> 4, makeup 6 -> 16. At -20 the comp only caught the initial
+    //   transient (GR 0.0 for the whole decay). At -28 GR holds ~-22 through the first second and
+    //   tapers -10 -> -5 -> 0: input range 43 dB becomes output range 14 dB. That is the sustainer.
+    // - out.level 0.85 -> 0.50. At 0.85 the output peaked -0.1 dBFS -- zero DAC clips by luck, no
+    //   margin. 0.50 puts peaks at -4.2 with the sustain still well above the earlier inaudible take.
+    // Builder accepted the higher hiss (compression lifts the noise floor with the quiet parts) as a
+    // fair trade for the sustain; the JFET's ~5 dB mains excess is a shielding fix, not device noise.
+    { "garrison",         "garrison",   true, true,  true, true, 0.75f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -28, 4.0f,  1, 250, 16,  0.50f,  0 },
 };
 #define N_BUILTIN ((int)(sizeof(s_builtin) / sizeof(s_builtin[0])))
 
