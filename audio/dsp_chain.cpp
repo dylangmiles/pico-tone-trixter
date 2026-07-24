@@ -161,7 +161,17 @@ static void out_process(Stage *s, float *buf, int n) {
 // ---------------------------------------------------------------------------
 enum { IN_LEVEL, IN_N };
 static Param s_in_params[IN_N] = {
-    { "level", 0.30f, 0.0f, 2.0f, 0.01f, "x" },   // dialed for K&K slide: comp-in peaks ~-3 dBFS
+    // Max raised 2.0 -> 8.0 (+18 dB) on 2026-07-24. Was an attenuator-only range, sized when the
+    // job was purely "tame the hot IR" with the analog chain making up level ahead of the ADC.
+    // Two measurements inverted that: the ADC clips at 1.35 V pk (Test C) so `pga` must run at 0,
+    // and gain before the ADC buys no SNR (SNR session Block 3: +18 dB pga -> +17.4 dB noise), so
+    // the makeup belongs AFTER the converter where it's free. Restoring op-amp-era staging on the
+    // JFET daughter needs x2.5 (garrison) to x5.0 (tanglewood-slide) -- both past the old cap.
+    // Step 0.01 -> 0.05: at the new 3.0-4.5 working values that's ~0.1 dB/detent (it was 800
+    // detents end-to-end at 0.01). Nothing downstream assumes <=1.0 -- comp + out.level and the
+    // int32 clip in main.cpp bound the DAC -- but this stage can now push the comp hard, so dial
+    // it on `meter` (comp-in peaks ~-3 dBFS), not by ear alone.
+    { "level", 0.30f, 0.0f, 8.0f, 0.05f, "x" },   // dialed for K&K slide: comp-in peaks ~-3 dBFS
 };
 typedef struct { float lin; } InState;
 static InState s_in_state;
@@ -231,18 +241,44 @@ float dsp_chain_comp_in_db(void) {
 // it at an SD-parsed table (see audio/tt_store).
 // ---------------------------------------------------------------------------
 static const Preset s_builtin[] = {
+    // ===== 2026-07-24 RESTAGE FOR THE JFET DAUGHTER AT `pga 0` — FIRST PASS, NOT YET TUNED BY EAR =====
+    // Every preset below was dialed on the OPA1642 op-amp daughter (x2.11). Two measurements forced a
+    // restage: (1) Test C — the ADC clips at 1.35 V pk, so `pga` must sit at 0; (2) the SNR session —
+    // gain ahead of the ADC buys no SNR (+18 dB pga -> +17.4 dB noise), so makeup belongs after it.
+    //
+    // Two independent level changes, applied to every preset:
+    //   a) daughter swap  x2.11 -> x0.84  = -8.0 dB  (hits all three presets equally)
+    //   b) pga -> 0       = -6 dB (tanglewood) / -12 dB (default) / 0 dB (garrison, already floored)
+    //
+    // in.level is NOT set to restore the old RMS — that would clip. It is set to hold the old
+    // comp-input PEAK, because the peaks changed differently from the sustain: at the old staging the
+    // ADC was hard-clipping every transient (a hard strum ran +11.7 dB over at pga 6, +17.8 at pga 12),
+    // so the converter was silently acting as the peak limiter. At `pga 0` through the JFET that same
+    // strum lands at -2.25 dBFS, intact. So the peak arriving at the comp is ~2.2 dB LOWER than before
+    // (it was pinned to 0 dBFS by clipping), while the SUSTAIN dropped by the full a+b. in.level takes
+    // the small peak correction; comp.thresh/makeup take the large sustain correction.
+    //
+    //   preset             in.level      comp.thr      makeup    reason
+    //   default            0.30 -> 0.40  -20 -> -37    3  -> 20  sustain -17.5 dB (pga -12, daughter -8)
+    //   tanglewood-slide   0.90 -> 1.15  -22 -> -34    6  -> 18  sustain -11.8 dB (pga -6,  daughter -8)
+    //   garrison           1.20 -> 3.00  -22 (same)    5 (same)  pga unchanged => pure x2.512 bookkeeping
+    //
+    // The K&K presets are derived from measured numbers and should land close. GARRISON'S in.level 3.00
+    // is exact gain bookkeeping (same total chain gain as before) but assumes the active preamp was
+    // previously at/near ADC clip — its actual output has never been measured. Check `meter` first.
+    // Attack times cut ~30% and out.level trimmed on all three: the ADC no longer limits transients for
+    // us, so the comp has to catch what the converter used to flatten. Dial on `meter` (comp-in peaks
+    // ~-3 dBFS, 0 DAC clips), not by ear alone.
+    //
     // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out    pga
-    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed. pga 12 = passive K&K.
-    { "default",          NULL,         true, false, true, true, 0.30f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -20, 2.0f, 20, 200,  3,  0.80f, 12 },
-    // tanglewood-slide (passive K&K via OPA1642 op-amp daughter): pga 6 — the op-amp's fixed +6 dB
-    // ahead of the ADC lets the codec PGA drop to +6 dB with the front end clean (0 ADC clips). in.level
-    // 0.90 + comp.thr -22 feed the comp near full scale; att 18 catches pick transients; out.level 0.70
-    // keeps DAC headroom (0 DAC clips on hard strums). Dialed on the op-amp daughter 2026-07-19.
-    { "tanglewood-slide", "tanglewood", true, true,  true, true, 0.90f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -22, 3.5f, 18, 300,  6,  0.70f,  6 },
-    // garrison (active pre-amp): pga 0 — the active preamp is so hot the codec PGA is floored; the op-amp
-    // daughter's fixed +6 dB is the only analog gain left. in.level 1.20 + comp.thr -22 recover level and
-    // re-engage the comp digitally; out.level 0.85 leaves DAC headroom for pick-attack transients (dialed 2026-07-12).
-    { "garrison",         "garrison",   true, true,  true, true, 1.20f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -22, 3.0f, 20, 250,  5,  0.85f,  0 },
+    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed.
+    { "default",          NULL,         true, false, true, true, 0.40f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -37, 2.5f, 12, 250, 20,  0.70f,  0 },
+    // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
+    // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
+    { "tanglewood-slide", "tanglewood", true, true,  true, true, 1.15f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -34, 3.5f, 12, 300, 18,  0.65f,  0 },
+    // garrison (active pre-amp): pga was already 0, so only the daughter swap moved — in.level absorbs
+    // all 8 dB of it and the comp keeps every number that was dialed by ear on 2026-07-12.
+    { "garrison",         "garrison",   true, true,  true, true, 3.00f, 120,  2, 1000, -2.5f,  1.0f, 3500, -1.5f, -22, 3.0f, 14, 250,  5,  0.75f,  0 },
 };
 #define N_BUILTIN ((int)(sizeof(s_builtin) / sizeof(s_builtin[0])))
 
@@ -353,7 +389,7 @@ static void chain_help(void) {
            "  <stage>.<param>         show param\n"
            "  <stage> on|off          enable/bypass stage (in, eq, comp, out)\n"
            "  preset [name]           list presets, or load one (switches IR too)\n"
-           "  in.level <x>            pre-comp trim — tame the hot IR (meter to ~-3 dBFS)\n"
+           "  in.level <x>            pre-comp trim + post-ADC makeup, 0..8 (meter to ~-3 dBFS)\n"
            "  bypass on|off           raw ADC->DAC: only out.level applies (IR/EQ/comp/in.level all off)\n"
            "  ir [name|none]          select IR: a name (tanglewood/garrison/an SD .wav), none=off,\n"
            "                          on=re-engage; no arg shows current + lists options\n"

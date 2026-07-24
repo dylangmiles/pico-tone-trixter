@@ -279,10 +279,11 @@ extern "C" bool app_gr_enabled(void)  { return g_gr_oled; }
 extern "C" void app_gr_set(bool on)   { g_gr_oled = on; }
 
 // app_hooks.h: ES8388 input PGA (reg 0x09, both channels). Nibble 0..8 = 0..+24 dB in 3 dB
-// steps. Default 4 (+12 dB) tracks es8388_init's 0x44 for the OPA1642 op-amp daughter; use
-// 6 (+18 dB) for the JFET source-follower daughter. Live via UART 'pga' or the MAIN menu —
-// lets us A/B the two daughters without reflashing.
-static int s_pga_nib = 4;                              // 4 = +12 dB, matches es8388_init (0x44)
+// steps. Gain only — there is NO attenuation setting, so 0 is the floor and 1.35 V pk is the
+// hardest the ADC can ever be driven. Default 0 tracks es8388_init's 0x00; see the register
+// write there for why 0 is now permanent for every daughter (headroom, and gain here buys no
+// SNR). Still live via UART 'pga' or the MAIN menu, for A/B and measurement.
+static int s_pga_nib = 0;                              // 0 = 0 dB, matches es8388_init (0x00)
 extern "C" int  app_pga_nib(void)  { return s_pga_nib; }
 extern "C" int  app_pga_db(void)   { return s_pga_nib * 3; }
 extern "C" void app_pga_set_nib(int n) {

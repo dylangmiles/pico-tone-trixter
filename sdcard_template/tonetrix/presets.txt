@@ -10,7 +10,8 @@
 #               that turns the whole convolution pipeline OFF. Omitting ir:
 #               inherits the default's (which is none).
 #   in.on  eq.on  comp.on  out.on   stage enables (1/0, on/off)
-#   in.level:   pre-comp input trim (tames the hot IR), ~0.0..1.0
+#   in.level:   pre-comp input trim, 0.0..8.0 (max raised from 2.0 on 2026-07-24 —
+#               with pga at 0 the makeup for the analog gain now lives here)
 #   eq.lo:      [freq_Hz, gain_dB]           low shelf
 #   eq.mid:     [freq_Hz, gain_dB, Q]        mid peak
 #   eq.hi:      [freq_Hz, gain_dB]           high shelf
@@ -32,32 +33,33 @@ in.on: 1
 eq.on: 0
 comp.on: 1
 out.on: 1
-in.level: 0.30
+in.level: 0.40
 eq.lo: [120, 0.0]
 eq.mid: [700, 0.0, 1.0]
 eq.hi: [3500, 0.0]
-comp: [-20, 2.0, 20, 200, 3]
-out.level: 0.80
-pga: 12
+comp: [-37, 2.5, 12, 250, 20]
+out.level: 0.70
+pga: 0
 
 ---
 
-# tanglewood-slide — passive K&K via the OPA1642 op-amp daughter (dialed 2026-07-19).
-# Op-amp's fixed +6 dB ahead of the ADC lets pga drop to 6 with the front end clean;
-# in.level 0.90 + comp -22 feed the comp near full scale, out.level 0.70 keeps DAC headroom.
+# tanglewood-slide — passive K&K via the JFET daughter, restaged for pga 0 (2026-07-24).
+# The JFET's x0.84 puts the ADC ceiling at 1.60 V at TSin: a hard strum (1.24 V) clears it
+# with 2.2 dB spare, so only body taps clip. in.level holds the comp-input PEAK; comp.thr
+# and makeup carry the sustain that the old pre-ADC gain used to supply.
 name: tanglewood-slide
 ir: tanglewood.wav
 in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 0.90
+in.level: 1.15
 eq.lo: [150, 3.0]
 eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
-comp: [-22, 3.5, 18, 300, 6]
-out.level: 0.70
-pga: 6
+comp: [-34, 3.5, 12, 300, 18]
+out.level: 0.65
+pga: 0
 
 ---
 
@@ -67,10 +69,10 @@ in.on: 1
 eq.on: 1
 comp.on: 1
 out.on: 1
-in.level: 1.20
+in.level: 3.00
 eq.lo: [120, 2.0]
 eq.mid: [1000, -2.5, 1.0]
 eq.hi: [3500, -1.5]
-comp: [-22, 3.0, 20, 250, 5]
-out.level: 0.85
+comp: [-22, 3.0, 14, 250, 5]
+out.level: 0.75
 pga: 0

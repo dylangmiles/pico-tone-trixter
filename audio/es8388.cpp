@@ -103,8 +103,17 @@ bool es8388_config_only(i2c_inst_t *i2c) {
     // opamp_vs_jfet_snr_2026-07-11). Net: same total chain gain / output level,
     // better SNR (gain moved forward — Friis). The digital trim (dsp_chain
     // in.level) is unchanged; only ADC-headroom gain moves.
-    // *** For the JFET source-follower daughter (unity gain), use 0x66 (+18 dB). ***
-    ok &= es8388_write(i2c, 0x09, 0x44);  // +12 dB — OPA1642 op-amp daughter (JFET daughter: 0x66 / +18 dB)
+    // 2026-07-24: **0x00 (0 dB) is now the permanent default, for every daughter.** Two
+    // measurements ended the search for the "right" PGA value:
+    //   - Test C: the ADC clips at 1.35 V pk at LIN2, and the ceiling scales 10^(-pga/20). At the
+    //     old 0x44 the K&K's ceiling was 0.16 V, so every body tap and hard strum clipped the
+    //     converter. `pga 0` is the only setting that clears normal playing.
+    //   - SNR session (Block 3): +18 dB of PGA raised the noise floor +17.4 dB — the noise is
+    //     ahead of the PGA, so gain here moves signal and noise together and buys no SNR at all.
+    // Together: `pga 0` costs nothing and buys back all the headroom. Make up level DIGITALLY
+    // after the ADC (dsp_chain in.level, whose range was widened to 8.0 to absorb it). Do not
+    // "restore" a nonzero value here to make a preset louder — that trades headroom for nothing.
+    ok &= es8388_write(i2c, 0x09, 0x00);  // 0 dB — headroom-first staging (was 0x44 op-amp / 0x66 JFET)
     // ADCCONTROL2 input select: 0x00=LIN1/RIN1  0x50=LIN2/RIN2
     ok &= es8388_write(i2c, 0x0A, 0x50);  // ADCCONTROL2: LIN2/RIN2
     ok &= es8388_write(i2c, 0x0B, 0x02);  // ADCCONTROL3: stereo
