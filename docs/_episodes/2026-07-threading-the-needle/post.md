@@ -4,7 +4,7 @@ subtitle: "I built a fancier buffer certain it would win. Then I measured it."
 episode: 4
 date: 2026-07-23
 published: false   # DRAFT — reframed around the JFET-wins twist; publish after the K&K tune + photos/video
-permalink: /episodes/2026-07-op-amp-front-end/
+permalink: /episodes/2026-07-threading-the-needle/
 image:
   path: /assets/og/og-episode-3.jpg
   width: 1200
