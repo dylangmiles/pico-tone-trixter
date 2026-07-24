@@ -271,8 +271,26 @@ static const Preset s_builtin[] = {
     // ~-3 dBFS, 0 DAC clips), not by ear alone.
     //
     // name              ir             in    eq     cmp   out   in    lo_f lo_g mid_f  mid_g  mid_q hi_f   hi_g  thr  ratio att rel  mkup out    pga
-    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). The inheritance seed.
-    { "default",          NULL,         true, false, true, true, 0.40f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -37, 2.5f, 12, 250, 20,  0.70f,  0 },
+    // default: dry baseline — no IR (ir NULL ⇒ "none" ⇒ convolution off). Three jobs, all of which
+    // want NEUTRAL AND SAFE rather than tuned: (1) the inheritance seed — a partial SD preset silently
+    // inherits every key it omits from here; (2) the dry A/B reference you switch to in order to hear
+    // what the IR/EQ/comp are actually doing; (3) the power-on preset.
+    //
+    // Revised 2026-07-24 after the Garrison bench session. The previous values (in.level 0.40,
+    // thr -37, makeup 20) came from the same first-pass arithmetic that the Garrison proved ~12 dB
+    // wrong — it restored the old RMS through a stage that had been CLIPPING, which is not a valid
+    // gain calculation. They also made the "dry baseline" the most heavily compressed preset in the
+    // file (20 dB of makeup squashing 30 dB of range), which is the opposite of a baseline.
+    //
+    // - in.level 1.00: unity. An honest seed, and it means comp-in == ADC level on the dry path.
+    // - thr -18 / ratio 3 / makeup 6: light SAFETY limiting, not sustain. Manufacturing loudness is
+    //   the tuned presets' job; this one should sound like the guitar.
+    // - attack 1 ms: THE generalizable lesson. The ADC used to flatten every transient for free at
+    //   the old pga values; at pga 0 nothing does, and the Garrison showed even 3 ms let the leading
+    //   edge through to the DAC. Anything inheriting from here must inherit a fast attack.
+    // Predicted dry, K&K or Garrison at their reference level (ADC peak ~-2.5 dBFS): comp-in -2.5,
+    // GR ~10 dB, out ~-10 dBFS, ~10 dB of DAC margin. To be confirmed on both guitars.
+    { "default",          NULL,         true, false, true, true, 1.00f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -18, 3.0f,  1, 250,  6,  0.70f,  0 },
     // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
     // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
     { "tanglewood-slide", "tanglewood", true, true,  true, true, 1.15f, 150,  3,  800, -3.0f,  1.0f, 1500, -2.0f, -34, 3.5f, 12, 300, 18,  0.65f,  0 },

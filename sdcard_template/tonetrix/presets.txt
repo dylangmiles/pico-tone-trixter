@@ -26,18 +26,21 @@
 # power cycle.
 # =========================================================================
 
-# default — dry baseline: no IR, convolution off. Also the inheritance seed.
+# default — dry baseline: no IR, convolution off. Also the inheritance seed: any preset
+# below that omits a key gets it from here. Kept NEUTRAL AND SAFE, not tuned — unity
+# in.level, light safety limiting only. attack 1 ms matters: at pga 0 nothing limits
+# transients before the DAC, so anything inheriting from here needs a fast attack.
 name: default
 ir: none
 in.on: 1
 eq.on: 0
 comp.on: 1
 out.on: 1
-in.level: 0.40
+in.level: 1.00
 eq.lo: [120, 0.0]
 eq.mid: [700, 0.0, 1.0]
 eq.hi: [3500, 0.0]
-comp: [-37, 2.5, 12, 250, 20]
+comp: [-18, 3.0, 1, 250, 6]
 out.level: 0.70
 pga: 0
 
