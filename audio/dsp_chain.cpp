@@ -293,7 +293,17 @@ static const Preset s_builtin[] = {
     // Confirmed on the Garrison 2026-07-24 (preamp 3/4, dry): comp-in peak -1.1 dBFS, GR -5..-7,
     // out peak -4.0, clip[ADC 0 DAC 0]. out.level 0.70 -> 0.60 because that take was still ~5 dB
     // under the hardest recorded strum (+4.2 comp-in), which extrapolates to out ~-2 dBFS. 1.3 dB is
-    // cheap insurance on the preset every partial SD preset inherits from. To re-confirm on the K&K.
+    // cheap insurance on the preset every partial SD preset inherits from.
+    //
+    // Also confirmed on the K&K same day, and this preset is now the standard ADC-headroom probe:
+    // dry + in.level unity + eq off means **comp in IS the ADC level**, no unknown IR gain in the
+    // way. Use `preset default` whenever you need to know where the converter actually sits.
+    // K&K hard body tap + two very hard bridge taps: comp in -1.1 / 0.0 / 0.0 dBFS, clip[ADC 0].
+    // DAC clipped 1/7/12 samples (0.02-0.25 ms) and the builder could not hear it, so 0.60 stands.
+    // That clipping is pure overshoot and is NOT tunable: 0.0 (comp in) + 6.0 (makeup) - 4.4
+    // (out.level 0.60) = +1.6 dBFS whenever the comp contributes nothing, and a 1 ms attack CANNOT
+    // catch a knuckle tap -- the leading edge arrives before any GR exists. Only static headroom
+    // fixes it (out.level 0.35 would), which is not worth the level on a preset this quiet.
     { "default",          NULL,         true, false, true, true, 1.00f, 120,  0,  700,  0.0f,  1.0f, 3500,  0.0f, -18, 3.0f,  1, 250,  6,  0.60f,  0 },
     // tanglewood-slide (passive K&K, JFET daughter): pga 0 — the JFET's x0.84 puts the ADC ceiling at
     // 1.60 V at TSin, which clears a hard strum (1.24 V) with 2.2 dB spare; only body taps clip now.
