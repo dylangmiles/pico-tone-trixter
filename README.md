@@ -2,7 +2,7 @@
 
 A guitar pedal that makes a piezo pickup sound like a studio microphone — in real-time, on a $7 chip.
 
-**Build log & demos:** [dylangmiles.github.io/pico-tone-trixter](https://dylangmiles.github.io/pico-tone-trixter/) ·
+**Build log & demos:** [dylangmiles.github.io/tone-trixter](https://dylangmiles.github.io/tone-trixter/) ·
 **Video:** [Building a DIY acoustic guitar pedal for great tone](https://www.youtube.com/watch?v=BtMPneFSfpQ)
 
 Piezo pickups are cheap and reliable but have a characteristic harsh, nasal "quack" that EQ alone can't fix. Tone Trixter applies an **acoustic body impulse response** (IR) to the live piezo signal using FFT convolution, transforming it to match a condenser microphone placed in front of the same guitar.
@@ -177,7 +177,7 @@ Six automated checks run: output length, signal modification, spectral shape, an
 
 ## Project Documentation
 
-- **[Build log (GitHub Pages)](https://dylangmiles.github.io/pico-tone-trixter/)** — the episode-by-episode story, with audio and video
+- **[Build log (GitHub Pages)](https://dylangmiles.github.io/tone-trixter/)** — the episode-by-episode story, with audio and video
 - [docs/ir_capture_guide.md](docs/ir_capture_guide.md) — IR capture methodology
 - [docs/wiring.md](docs/wiring.md) — wiring notes
 - [sdcard_template/](sdcard_template/) — seed an SD card with presets + IRs

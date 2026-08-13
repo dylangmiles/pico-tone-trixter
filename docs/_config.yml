@@ -1,45 +1,37 @@
-title: Pico Tone Trixter
+# Redirect-only site.
+#
+# The Tone Trixter build log moved to https://dylangmiles.github.io/tone-trixter/
+# on 2026-08-13 (repo: dylangmiles/tone-trixter) so it could span both the RP2350
+# and Daisy Seed3 builds instead of living inside one firmware repo.
+#
+# What remains here:
+#   redirects/  — permalink stubs for every old URL, pointing at the new site
+#   assets/og/  — the Open Graph images, KEPT so social cards already shared on
+#                 WhatsApp/X/LinkedIn keep rendering; those cached cards embed
+#                 the absolute image URL, which would 404 if these were deleted.
+#
+# Do NOT archive this repo: archiving disables Actions, the site stops building,
+# and every old link dies. GitHub cannot redirect a Pages URL server-side — only
+# a live site can serve the redirect.
+
+title: Tone Trixter (moved)
 description: >-
-  Turning a $7 codec chip into a $300 studio microphone — a real-time
-  guitar-pedal build log. Built in Cape Town, South Africa.
+  This build log has moved to https://dylangmiles.github.io/tone-trixter/
 author: Dylan Miles
 
-# Project site lives at https://dylangmiles.github.io/pico-tone-trixter/
 url: "https://dylangmiles.github.io"
 baseurl: "/pico-tone-trixter"
 
 theme: minima
-# Dark palette is applied via assets/main.scss (minima 2.5 has no built-in skins).
 
+# jekyll-sitemap deliberately dropped: the old site must not publish a sitemap
+# competing with the new one in search. Every stub also carries robots noindex
+# and a canonical pointing at the new URL.
 plugins:
-  - jekyll-feed
   - jekyll-seo-tag
-  - jekyll-sitemap   # generates /sitemap.xml (+ robots.txt) for Google Search Console
 
-# Search Console HTML-tag verification — jekyll-seo-tag emits the
-# <meta name="google-site-verification"> tag in every page's <head>.
-google_site_verification: JaFouvFuKEnFRojpttTpXpunyvV97YzRMqqS0eay-qw
-
-# Posts are a folder-per-episode collection (each with co-located assets),
-# rather than the flat _posts convention.
-collections:
-  episodes:
-    output: true
-
-defaults:
-  - scope:
-      path: ""
-      type: episodes
-    values:
-      layout: episode
-
-# Keep the firmware repo's own files and per-episode social copy out of the build.
-# Audio (LFS-tracked wav) IS copied into _site: the GitHub Actions build checks out
-# LFS (lfs: true), so the real binaries get baked in and are served as ordinary
-# Pages CDN assets via relative links — LFS bandwidth is only touched at build time.
 exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
-  - "_episodes/**/social.md"
   - README.md
