@@ -198,7 +198,7 @@ RP2350 hardware FPU (Cortex-M33) expected ~10-20× float speedup. Projected with
 
 ## GPIO pinout
 
-Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOUT, DIN, SDA, SCL) now on Pico LEFT side; all clocks (BCLK, LRCLK, MCLK) on RIGHT side. See `pico-tone-trixter-private/docs/proto_board_layout_2026-05-01.md` for routing rationale.
+Reallocated 2026-05-01 to optimise proto-board wiring. All audio data lines (DOUT, DIN, SDA, SCL) now on Pico LEFT side; all clocks (BCLK, LRCLK, MCLK) on RIGHT side. See `../private/docs/proto_board_layout_2026-05-01.md` (repo `pico-tone-trixter-private`) for routing rationale.
 
 | GPIO | Function | Side (mirrored bottom view) |
 |------|----------|---|
