@@ -867,10 +867,15 @@ volatile int32_t  g_max_l       = 0;
 static int32_t  s_sine_table[256];
 static uint32_t g_tone_phase  = 0;
 static uint32_t g_tone_blocks = 0;
-#define TONE_DURATION_BLOCKS 1504u  // ~4 s at 376 blocks/s (96 kHz / 256 samples)
-#define TONE_PHASE_INC       19685120u // 440 Hz at 96 kHz: 2^32 * 440 / 96000
-#define TONE_HALF_BLOCKS     752u   // half of TONE_DURATION_BLOCKS, for DC-step test
-#define SQUARE_HALF_SAMPLES  240u   // 96000 / (2 * 240) = 200 Hz square period
+// CORRECTED 2026-08-23. These were computed for 96 kHz and never updated when the
+// engine reverted to 48 kHz on 2026-06-07 (see es8388.cpp DACCONTROL2). They still
+// *ran*, just at half their documented values -- a 220 Hz tone for 8 s and a 100 Hz
+// square. Derived from I2S_SAMPLE_RATE now so a future rate change carries them along.
+#define TONE_BLOCKS_PER_SEC  (I2S_SAMPLE_RATE / I2S_BLOCK_SIZE)          // 187.5 at 48 kHz
+#define TONE_DURATION_BLOCKS 750u   // ~4 s at 187.5 blocks/s (48 kHz / 256 samples)
+#define TONE_PHASE_INC       39370534u // 440 Hz at 48 kHz: 2^32 * 440 / 48000
+#define TONE_HALF_BLOCKS     375u   // half of TONE_DURATION_BLOCKS, for DC-step test
+#define SQUARE_HALF_SAMPLES  120u   // 48000 / (2 * 120) = 200 Hz square period
 
 // ---------------------------------------------------------------------------
 // SCLK quiesce / resume
