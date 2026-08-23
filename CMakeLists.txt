@@ -176,6 +176,7 @@ add_executable(pico_tone_trixter
     audio/sd_diskio.c
     audio/wav_load.c
     audio/tt_store.cpp
+    audio/backing.cpp
     lib/fatfs/ff.c
     lib/fatfs/ffunicode.c
     i2s/i2s.c

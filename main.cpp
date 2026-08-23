@@ -101,6 +101,7 @@ static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consec
 #include "audio/sd_spi.h"
 #include "audio/wav_load.h"
 #include "audio/tt_store.h"
+#include "audio/backing.h"
 #include <strings.h>          // strcasecmp
 #include <cctype>             // tolower
 extern "C" {                 // FatFs is a C library — keep C linkage in this C++ TU
@@ -211,6 +212,7 @@ static void ir_scan_sd(void) {
     FILINFO fno;
     while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] && s_ir_count < 1 + N_EMBED_IR + MAX_SD_IR) {
         if (fno.fattrib & AM_DIR) continue;
+        if (fno.fname[0] == '.') continue;      // skip macOS "._name.wav" AppleDouble sidecars
         size_t l = strlen(fno.fname);
         if (l < 5 || strcasecmp(fno.fname + l - 4, ".wav") != 0) continue;
         IrEntry *e = &s_ir_table[s_ir_count++];
@@ -641,9 +643,46 @@ static void dsp_uart_poll(void) {
                         printf("  [%d]%c %-20s %s\n", i, i == s_cur_ir ? '*' : ' ', s_ir_table[i].name,
                                i == IR_NONE ? "(convolution off)" : s_ir_table[i].is_sd ? s_ir_table[i].path : "(built-in)");
                 }
+                else if (strncmp(line, "bk", 2) == 0 && (line[2] == 0 || line[2] == ' ')) {
+                    const char *a = line[2] ? line + 3 : "";
+                    while (*a == ' ') a++;
+                    if (!*a || strcmp(a, "list") == 0) {
+                        printf("backing (%d):\n", backing_count());
+                        for (int i = 0; i < backing_count(); i++)
+                            printf("  [%d]%c %s\n", i, i == backing_current() ? '*' : ' ', backing_name(i));
+                        if (backing_count() == 0) printf("  (none — /tonetrix/backing/*.wav)\n");
+                    } else if (strcmp(a, "off") == 0 || strcmp(a, "stop") == 0) {
+                        backing_stop(); printf("bk: stopped\n");
+                    } else if (strcmp(a, "scan") == 0) {
+                        backing_scan(); printf("bk: %d file(s)\n", backing_count());
+                    } else if (strcmp(a, "stat") == 0) {
+                        uint32_t u, mu; int pct; backing_stats(&u, &pct, &mu);
+                        printf("bk: %s ring=%d%% underruns=%lu max_service=%lu us level=%.2f\n",
+                               backing_playing() ? backing_name(backing_current()) : "(stopped)",
+                               pct, (unsigned long)u, (unsigned long)mu, (double)backing_level());
+                    } else if (strncmp(a, "bench", 5) == 0) {
+                        int kb = atoi(a + 5); if (kb <= 0) kb = 256;
+                        printf("bk: reading %d kB... (audio will glitch)\n", kb);
+                        int r = backing_bench(kb);
+                        printf("bk: %d kB/s sequential — need ~%u kB/s to stream 48k/16-bit mono\n",
+                               r, 48000u * 2u / 1024u);
+                    } else if (strncmp(a, "level", 5) == 0) {
+                        backing_set_level((float)atof(a + 5));
+                        printf("bk: level %.2f\n", (double)backing_level());
+                    } else {
+                        int i = -1;
+                        if (a[0] >= '0' && a[0] <= '9') i = atoi(a);
+                        else for (int k = 0; k < backing_count(); k++)
+                                 if (ir_name_eq(backing_name(k), a)) { i = k; break; }
+                        int rc = backing_play(i);
+                        if (rc == 0) printf("bk: playing %s\n", backing_name(i));
+                        else         printf("bk: %s\n", backing_err_str(rc));
+                    }
+                }
                 else if (strcmp(line, "sdreload") == 0) {               // re-mount + re-read card without a reboot
                     if (sd_init() && f_mount(&s_fatfs, "", 1) == FR_OK) {
                         ir_scan_sd();
+                        backing_scan();
                         int n = 0;
                         if (tt_store_load()) { const Preset *ps = tt_store_presets(&n); dsp_chain_install_presets(ps, n); }
                         else                   dsp_chain_install_presets(NULL, 0);   // revert to built-ins
@@ -678,6 +717,14 @@ static void dsp_uart_poll(void) {
                            "  sdcfg                   show on-card config + presets that were loaded\n"
                            "  sdir                    list IR table (built-in + scanned SD WAVs; * = current)\n"
                            "  sdreload                re-read the card after editing (no reboot)\n");
+                    printf("Backing tracks (/tonetrix/backing/*.wav):\n"
+                           "  bk                      list tracks (* = playing)\n"
+                           "  bk <n>|<name>           play a track (loops seamlessly)\n"
+                           "  bk off                  stop\n"
+                           "  bk level <x>            backing level 0..2 (independent of out.level)\n"
+                           "  bk stat                 ring fill, underruns, worst service time\n"
+                           "  bk bench [kB]           sequential card read speed (glitches audio)\n"
+                           "  bk scan                 re-scan the folder\n");
 #endif
                     dsp_chain_command(line);               // then the DSP-command section
                 }
@@ -690,6 +737,9 @@ static void dsp_uart_poll(void) {
                     printf("  preset     = %s [%d]\n", dsp_chain_preset_name(s_cur_preset), s_cur_preset);
                     printf("  ir         = %s%s\n", s_ir_table[app_ir_current()].name,
                            app_ir_current() == IR_NONE ? " (convolution off)" : "");
+                    printf("  backing    = %s (level %.2f)\n",
+                           backing_playing() ? backing_name(backing_current()) : "off",
+                           (double)backing_level());
                     printf("  gr_meter   = %s\n", g_gr_oled ? "on" : "off");
                     printf("  tuner      = %s\n", g_tuner  ? "on" : "off");
                     printf("  meter      = %s\n", g_meter  ? "on" : "off");
@@ -1309,6 +1359,9 @@ int main() {
         // switch (g_pending_ir) applies on the first block, like any preset change.
         if (sd_init() && f_mount(&s_fatfs, "", 1) == FR_OK) {
             ir_scan_sd();                                  // /tonetrix/ir/*.wav → IR table
+            backing_scan();                                // /tonetrix/backing/*.wav → backing table
+            if (backing_count()) printf("sd: %d backing track%s\n", backing_count(),
+                                        backing_count() == 1 ? "" : "s");
             if (tt_store_load()) {
                 int n = 0; const Preset *ps = tt_store_presets(&n);
                 if (ps) dsp_chain_install_presets(ps, n);
@@ -1403,6 +1456,7 @@ int main() {
         dsp_uart_poll();                           // non-blocking live-tuning over UART
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
+        backing_service();                         // top up the SD backing ring (bounded read)
         if (g_fsw_dbg) fsw_dbg_poll();             // raw footswitch wiring test (when 'fsw on')
         else           footswitch_poll();          // tuner / bypass stomp switches
         if (g_enc_dbg) enc_dbg_poll();             // encoder raw debug (when 'enc on')
@@ -1512,6 +1566,7 @@ int main() {
                     __builtin_memcpy(s_dsp_out, s_dsp_in[b], sizeof(s_dsp_out));
                 }
                 dsp_chain_process(s_dsp_out, I2S_BLOCK_SIZE);   // EQ -> Dynamics -> Output level
+                backing_mix(s_dsp_out, I2S_BLOCK_SIZE);        // drums AFTER the chain: no IR/EQ/comp on the bed
             }
             int wb = g_staging_pub ^ 1;            // fill the buffer the output IRQ is NOT reading
             uint32_t blk_opeak = 0, blk_oclip = 0; // output peak + DAC-clip count this block (for 'meter')
