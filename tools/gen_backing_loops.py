@@ -145,7 +145,35 @@ def v_brush_hit(rng):
     """Brushed backbeat -- softer, shorter than a struck snare."""
     return _snare(rng, 0.045, 0.18, 0.55)
 
-VOICES = {"kick": v_kick, "snare": v_snare, "ghost": v_snare_ghost,
+def v_clap(rng):
+    """Handclap: three quick slaps a few ms apart, then a short room tail.
+
+    The multi-slap flam is what makes it read as hands rather than a snare -- a
+    single burst just sounds like a rimshot.
+    """
+    n = int(0.28 * SR)
+    out = array('f', bytes(4 * n))
+    for k, off in enumerate((0, int(0.009 * SR), int(0.018 * SR))):
+        m = int(0.030 * SR)
+        nz = _noise(m, rng)
+        _hp(nz, 900.0)
+        _lp(nz, 3200.0)
+        env = _env(m, 0.0002, 0.008)
+        g = (1.0, 0.80, 0.65)[k]
+        for i in range(m):
+            if off + i < n:
+                out[off + i] += nz[i] * env[i] * g
+    tail_off = int(0.018 * SR)
+    m = n - tail_off
+    nz = _noise(m, rng)
+    _hp(nz, 1100.0)
+    _lp(nz, 2600.0)
+    env = _env(m, 0.001, 0.075)
+    for i in range(m):
+        out[tail_off + i] += nz[i] * env[i] * 0.45
+    return out
+
+VOICES = {"clap": v_clap, "kick": v_kick, "snare": v_snare, "ghost": v_snare_ghost,
           "rim": v_rim, "hat": v_hat, "hato": v_hat_open,
           "brush": v_brush, "brushit": v_brush_hit}
 
@@ -182,6 +210,52 @@ STYLES = {
         fill={"snare": [(8, 0.85), (10, 0.8), (12, 0.9), (14, 1.0)],
               "hato":  [(14, 0.6)],
               "kick":  [(8, 0.9)]}),
+
+    # Feels, not covers: these are generic grooves sized to play along with songs of
+    # that character. Tempos are best estimates -- retune with --bpm against the record.
+    "folk_rock": dict(
+        fn="folkr", bpm=128, bars=4, div=16, swing=0.08,
+        note="Gentle country-folk-rock: soft brushed backbeat, sparse kick, light 8ths.",
+        pattern={
+            "kick":    [(0, 0.90), (8, 0.75), (14, 0.40)],
+            "brushit": [(4, 0.85), (12, 0.90)],
+            "hat":     [(0, 0.40), (2, 0.28), (4, 0.36), (6, 0.28),
+                        (8, 0.40), (10, 0.28), (12, 0.36), (14, 0.30)],
+            "rim":     [(7, 0.22)],
+        },
+        fill_from=12,
+        fill={"brushit": [(12, 0.85), (14, 0.90)],
+              "hat":     [(12, 0.36), (13, 0.26), (14, 0.34), (15, 0.30)]}),
+
+    "soul_pop": dict(
+        fn="soul", bpm=150, bars=4, div=16, swing=0.0,
+        note="Bright uptempo soul-pop: full kit, hard backbeat, driving straight 8ths.",
+        pattern={
+            "kick":  [(0, 1.0), (6, 0.70), (8, 0.85), (11, 0.55)],
+            "snare": [(4, 1.0), (12, 1.0)],
+            "ghost": [(7, 0.30), (15, 0.35)],
+            "hat":   [(0, 0.72), (2, 0.46), (4, 0.66), (6, 0.46),
+                      (8, 0.72), (10, 0.46), (12, 0.66), (14, 0.50)],
+        },
+        fill_from=12,
+        fill={"snare": [(12, 0.90), (13, 0.75), (14, 0.95), (15, 0.85)],
+              "hato":  [(12, 0.55)],
+              "kick":  [(12, 0.90)]}),
+
+    "rockabilly": dict(
+        fn="rkbly", bpm=156, bars=4, div=16, swing=0.06,
+        note="Rockabilly bounce: hard backbeat doubled by handclaps, driving 8ths.",
+        pattern={
+            "kick":  [(0, 1.0), (8, 0.90), (14, 0.50)],
+            "snare": [(4, 0.95), (12, 0.95)],
+            "clap":  [(4, 0.80), (12, 0.85)],   # the signature -- claps ON the backbeat
+            "hat":   [(0, 0.62), (2, 0.42), (4, 0.56), (6, 0.42),
+                      (8, 0.62), (10, 0.42), (12, 0.56), (14, 0.46)],
+        },
+        fill_from=12,
+        fill={"snare": [(12, 0.95), (14, 0.85), (15, 0.95)],
+              "clap":  [(12, 0.85), (14, 0.75)],
+              "kick":  [(12, 0.90)]}),
 
     "folk_shuffle": dict(
         fn="folksh", bpm=76, bars=4, div=12, swing=0.0,
