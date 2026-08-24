@@ -655,6 +655,8 @@ static void dsp_uart_poll(void) {
                         backing_stop(); printf("bk: stopped\n");
                     } else if (strcmp(a, "scan") == 0) {
                         backing_scan(); printf("bk: %d file(s)\n", backing_count());
+                    } else if (strcmp(a, "stat reset") == 0) {
+                        backing_stats_reset(); printf("bk: stats cleared\n");
                     } else if (strcmp(a, "stat") == 0) {
                         uint32_t u, mu; int pct; backing_stats(&u, &pct, &mu);
                         printf("bk: %s ring=%d%% underruns=%lu max_service=%lu us level=%.2f\n",
@@ -1461,7 +1463,6 @@ int main() {
         dsp_uart_poll();                           // non-blocking live-tuning over UART
         uint32_t uart_dt = time_us_32() - uart_t0;
         if (uart_dt > g_max_uart_us) g_max_uart_us = uart_dt;
-        backing_service();                         // top up the SD backing ring (bounded read)
         if (g_fsw_dbg) fsw_dbg_poll();             // raw footswitch wiring test (when 'fsw on')
         else           footswitch_poll();          // tuner / bypass stomp switches
         if (g_enc_dbg) enc_dbg_poll();             // encoder raw debug (when 'enc on')
@@ -1593,6 +1594,13 @@ int main() {
             g_staging_pub = wb;                    // atomic publish to the output IRQ
             uint32_t proc_dt = time_us_32() - proc_t0;   // includes the cross-core tail wait
             if (proc_dt > g_max_proc_us) g_max_proc_us = proc_dt;
+
+            // Top up the SD backing ring AFTER the block is published and OUTSIDE the
+            // proc timer: this is the point of maximum slack before the next block is
+            // due, and keeping it out of the timer leaves `proc` meaning DSP work
+            // rather than DSP + SD (it read 6.7 ms when the two were conflated).
+            // Its own cost is bounded by SERVICE_BUDGET_US; see `bk stat`.
+            backing_service();
         }
         if ((time_us_32() - last_diag) < 1000000u) continue;   // diagnostics only ~1 Hz
         last_diag += 1000000u;

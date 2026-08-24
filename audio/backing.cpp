@@ -29,7 +29,20 @@
 // block-publication path, so a bigger chunk trades underrun margin for jitter.
 // `bk stat` reports the truth (underruns + worst service time); raise this only if
 // that says you need to.
-#define CHUNK_BYTES        1024u
+// 256 B chunks. Measured card speed is 291 kB/s (`bk bench`), so a chunk costs
+// ~0.88 ms -- small enough to fit the slack in a 5.33 ms block alongside the
+// convolver. Throughput was never the constraint (291 vs 93 kB/s needed);
+// GRANULARITY is, because each f_read is atomic and blocking, and anything that
+// overruns the block deadline costs a dropped block -- which the convolver renders
+// as an IR-tail discontinuity.
+// Demand is exactly 512 B/block (256 samples x 2), so steady state is two chunks.
+#define CHUNK_BYTES        256u
+
+// Wall-clock budget per service() call. MUST comfortably exceed one chunk read or
+// the catch-up loop never executes: at 1500 us with 512 B chunks it never did, and
+// the ring sat at 2% -- full throughput, zero reserve. Checked between reads, so
+// worst case is BUDGET + one chunk ~= 2.9 ms.
+#define SERVICE_BUDGET_US  2000u
 
 struct Entry { char name[BACKING_NAME_LEN]; char path[64]; };
 
@@ -194,11 +207,13 @@ static bool fill_chunk(void) {
 void backing_service(void) {
     if (!s_playing) return;
     uint32_t t0 = time_us_32();
-    // One chunk normally; up to four while the ring is below a quarter, so a track
-    // that has just started (or just survived a stall) refills quickly. Still bounded.
-    uint32_t fill = s_head - s_tail;
-    int budget = (fill < RING_SAMPLES / 4) ? 4 : 1;
-    while (budget-- > 0 && fill_chunk()) { }
+    // Always attempt one chunk -- a starved ring must make progress even on a slow
+    // card -- then keep reading until the budget runs out. No ring-level gate: a
+    // full ring makes fill_chunk() return false on the no-room check without ever
+    // touching the card, so letting it fill completely is free and buys the most
+    // stall tolerance.
+    bool more = fill_chunk();
+    while (more && (time_us_32() - t0) < SERVICE_BUDGET_US) more = fill_chunk();
     uint32_t dt = time_us_32() - t0;
     if (dt > s_max_service_us) s_max_service_us = dt;
 }
