@@ -80,7 +80,11 @@ static volatile uint32_t g_max_proc_us = 0;
 static volatile uint32_t g_max_tail_us = 0;
 static volatile uint32_t g_max_uart_us = 0;   // longest dsp_uart_poll() (runs every block)
 static volatile uint32_t g_max_diag_us = 0;   // longest once-per-second diagnostics block
-static volatile uint32_t g_max_gap_us  = 0;   // longest interval between consecutive block services
+static volatile uint32_t g_max_gap_us  = 0;
+// `stats` reports blocks SINCE THE LAST RESET. Without a baseline, resetting the
+// peaks and the dropped count while the raw block counter kept climbing would make
+// every rate calculation wrong -- which is the whole point of taking the reading.
+static uint32_t          s_stats_base_blocks = 0;   // longest interval between consecutive block services
 
 // ---------------------------------------------------------------------------
 // IR convolution toggle.
@@ -626,9 +630,21 @@ static void dsp_uart_poll(void) {
                     }
                 }
                 else if (strcmp(line, "oleddma") == 0) oled_dma_selftest();   // DMA-flush diagnostic
+                else if (strcmp(line, "stats reset") == 0) {
+                    // Zero the peak-holds and the drop counter, and rebase the block
+                    // count. Cheap races with Core 1 (tail) and the IRQ are benign:
+                    // worst case one sample is lost from a peak that is about to be
+                    // re-measured anyway.
+                    s_stats_base_blocks = g_irq1_count;
+                    g_dropped_blocks = 0;
+                    g_max_proc_us = g_max_tail_us = g_max_uart_us = 0;
+                    g_max_diag_us = g_max_gap_us = 0;
+                    printf("stats cleared — counting from here\n");
+                }
                 else if (strcmp(line, "stats") == 0)
                     printf("blocks=%lu dropped=%lu proc=%lu tail=%lu uart=%lu diag=%lu gap=%lu us\n",
-                           (unsigned long)g_irq1_count, (unsigned long)g_dropped_blocks,
+                           (unsigned long)(g_irq1_count - s_stats_base_blocks),
+                           (unsigned long)g_dropped_blocks,
                            (unsigned long)g_max_proc_us, (unsigned long)g_max_tail_us,
                            (unsigned long)g_max_uart_us, (unsigned long)g_max_diag_us,
                            (unsigned long)g_max_gap_us);
@@ -719,6 +735,9 @@ static void dsp_uart_poll(void) {
                            "  sdcfg                   show on-card config + presets that were loaded\n"
                            "  sdir                    list IR table (built-in + scanned SD WAVs; * = current)\n"
                            "  sdreload                re-read the card after editing (no reboot)\n");
+                    printf("Diagnostics:\n"
+                           "  stats                   blocks/dropped + worst-case timings since reset\n"
+                           "  stats reset             zero the peak-holds and start a fresh window\n");
                     printf("Backing tracks (/tonetrix/backing/*.wav):\n"
                            "  bk                      list tracks (* = playing)\n"
                            "  bk <n>|<name>           play a track (loops seamlessly)\n"
