@@ -183,6 +183,21 @@ STYLES = {
               "hato":  [(14, 0.6)],
               "kick":  [(8, 0.9)]}),
 
+    "folk_shuffle": dict(
+        fn="folksh", bpm=76, bars=4, div=12, swing=0.0,
+        note="Slow brushed shuffle in 12/8; swirl on the shuffle 'and'.",
+        # div=12 puts the shuffle in the grid itself (triplet 8ths), so no swing
+        # offset is needed -- same approach as country_blues.
+        pattern={
+            "kick":    [(0, 0.95), (6, 0.80)],
+            "brushit": [(3, 0.90), (9, 0.95)],
+            "brush":   [(2, 0.45), (5, 0.50), (8, 0.45), (11, 0.55)],
+            "rim":     [(7, 0.25)],
+        },
+        fill_from=9,
+        fill={"brushit": [(9, 0.90), (11, 0.85)],
+              "brush":   [(10, 0.50)]}),
+
     "country_folk": dict(
         fn="folk", bpm=104, bars=4, div=16, swing=0.12,
         note="Light two-step with brushes: brushed backbeat, swirl on the offbeats.",
