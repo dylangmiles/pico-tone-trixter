@@ -173,6 +173,22 @@ bool oled_init(void) {
         sleep_ms(20);
     }
 
+    // UN-STICK A LATCHED CONTROLLER before configuring it. Without a hardware RES, a
+    // panel interrupted mid-command sits waiting for a PARAMETER byte -- and then eats
+    // the first byte of our init sequence as that parameter, shifting everything after
+    // it. That misalignment IS the vertically-offset splash. Double-sending the config
+    // cannot fix it: the second pass just starts from a different misalignment.
+    //
+    // 0xE3 is NOP and takes no parameters. A short run satisfies any pending parameter
+    // (harmlessly, as a value) and leaves the controller aligned in command state, so the
+    // real sequence below lands on a receptive part. Then 0xAE blanks it, so a re-init of
+    // a live garbled panel does not show junk while it is being reconfigured.
+    // Costs microseconds. Only genuinely needed while RES is unwired -- but harmless with
+    // a hardware reset too, so it stays either way.
+    static const uint8_t unstick[] = { 0xE3, 0xE3, 0xE3, 0xE3, 0xE3, 0xE3, 0xE3, 0xE3, 0xAE };
+    oled_cmds(unstick, sizeof unstick);
+    sleep_ms(2);
+
     // Send the config TWICE (register writes are idempotent). Without a hardware reset,
     // the first I2C burst right after power-up occasionally drops a byte — which misaligns
     // the rest of the sequence and shows as a vertically offset image (splash starting

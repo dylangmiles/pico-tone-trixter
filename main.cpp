@@ -478,8 +478,8 @@ static int enc_read(bool *clicked) {
 // Drive the OLED menu from the encoder. The framebuffer flush is now DMA-backed and
 // non-blocking (oled_flush_async + oled_flush_service in the Core 0 loop), so navigation
 // repaints no longer hiccup the audio; it still only repaints on an actual encoder event.
-// (Manual OLED reinit, if a panel ever garbles, is the UART `oled` command — the old
-// double-click reinit gesture was retired now that the GP11 hardware RES keeps it stable.)
+// (Manual OLED reinit, if a panel ever garbles, is the UART `oled` command, or the
+// encoder double-push gesture below.)
 //
 // After this long without an encoder event, drop out of the menu back to the home
 // screen so the live GR meter reappears while you play.
@@ -488,6 +488,31 @@ static int enc_read(bool *clicked) {
 static void menu_poll(void) {
     bool click;
     int turn = enc_read(&click);
+
+    // Recovery gesture: DOUBLE-PUSH the encoder (two clicks within ~400 ms) to re-init
+    // the OLED after a garbled / vertically-offset boot (v1_issues_backlog #7).
+    //
+    // RESTORED 2026-08-24. It was retired on 2026-07-08 "now that the GP11 hardware RES
+    // keeps it stable" -- but the panel's RES wire is still tied to VCC on this build, so
+    // oled_init()'s reset pulse on GP11 goes nowhere and the defect has had NO mitigation
+    // since. Retire it again only once RES is physically on GP11.
+    //
+    // Placed BEFORE the home-screen early-return on purpose: a garbled boot shows the home
+    // screen, which is exactly when you need this. Single clicks still drive the menu; only
+    // the second quick click re-inits (~150 ms blocking, brief audio dropout -- acceptable,
+    // you are not playing when the screen is unreadable).
+    static uint32_t last_click_us = 0;
+    if (click) {
+        uint32_t now_us = time_us_32();
+        if (last_click_us && (now_us - last_click_us) < 400000u) {
+            last_click_us = 0;
+            oled_init();
+            if (g_on_home) show_splash();
+            else { menu_render(); oled_flush(); }
+            return;                     // swallow it: that click was the gesture, not a command
+        }
+        last_click_us = now_us;
+    }
 
     static uint32_t last_activity_us = 0;
     if (turn != 0 || click) last_activity_us = time_us_32();
@@ -1385,9 +1410,7 @@ int main() {
         // switch (g_pending_ir) applies on the first block, like any preset change.
         if (sd_init() && f_mount(&s_fatfs, "", 1) == FR_OK) {
             ir_scan_sd();                                  // /tonetrix/ir/*.wav → IR table
-            backing_scan();                                // /tonetrix/backing/*.wav → backing table
-            if (backing_count()) printf("sd: %d backing track%s\n", backing_count(),
-                                        backing_count() == 1 ? "" : "s");
+            // backing_scan() deliberately deferred until AFTER oled_init() -- see below.
             if (tt_store_load()) {
                 int n = 0; const Preset *ps = tt_store_presets(&n);
                 if (ps) dsp_chain_install_presets(ps, n);
@@ -1415,6 +1438,17 @@ int main() {
         } else {
             printf("OLED 0x3C: not found — check wiring / CS-DC-RES ties\n");
         }
+
+        // Backing-folder scan runs HERE, after the OLED is up, not with the other SD
+        // work above. The panel garbles when a byte is dropped on its first post-power
+        // I2C burst (v1_issues_backlog #7), and scanning drove the bit-banged SD SPI
+        // immediately before that burst. Moving it after removes that adjacency. This
+        // is an EXPERIMENT, not the fix -- the fix is wiring RES to GP11; if garbling
+        // is unchanged, this ordering is merely harmless and can stay.
+        // Nothing needs the backing table before this point.
+        backing_scan();
+        if (backing_count()) printf("sd: %d backing track%s\n", backing_count(),
+                                    backing_count() == 1 ? "" : "s");
         menu_init();                // encoder menu (splash stays until the first turn/click)
         printf("DSP chain ready — preset '%s'. Type 'help' over UART.\n", dsp_chain_preset_name(0));
         fflush(stdout);
