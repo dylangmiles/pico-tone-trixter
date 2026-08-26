@@ -26,6 +26,17 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "..", "sdcard_template", "tonetrix", "backing")
 PEAK_DBFS = -6.0          # leave headroom; the loop is summed with the guitar
 
+# Beat 1 of every bar is boosted by this factor so the downbeat is unmistakable to play
+# to. Applied at render time rather than baked into each pattern, so it stays uniform
+# across styles and is one number to change. Everything is peak-normalised afterwards,
+# so the accent lifts the "1" relative to the rest rather than raising the whole loop.
+# Beat 1 is marked two ways. The PING is the one you actually hear: a short
+# inharmonic bell, deliberately NOT a kit voice, so the "1" differs in TIMBRE and not
+# just in level -- a few dB of accent is easy to lose once a guitar is on top of it.
+# The accent is kept small as reinforcement.
+DOWNBEAT_ACCENT = 1.12
+PING_LEVEL      = 0.55    # 0 = no ping, marker is the accent alone
+
 # ---------------------------------------------------------------- primitives
 
 def _lp(buf, cutoff):
@@ -145,6 +156,30 @@ def v_brush_hit(rng):
     """Brushed backbeat -- softer, shorter than a struck snare."""
     return _snare(rng, 0.045, 0.18, 0.55)
 
+def v_ping(rng):
+    """Downbeat marker: a short inharmonic bell, ~2.1 kHz with bell-ratio partials.
+
+    Inharmonic on purpose -- a plain sine reads as a tuned note and fights the music,
+    while bell ratios read as a percussion marker. Sits in a band the kit mostly
+    leaves free, so it stays audible under a guitar without being loud.
+    """
+    n = int(0.22 * SR)
+    out = array('f', bytes(4 * n))
+    env = _env(n, 0.0004, 0.055)
+    f0 = 2100.0
+    for mult, g in ((1.0, 1.0), (2.76, 0.45), (5.40, 0.18)):
+        ph = 0.0
+        for i in range(n):
+            ph += 2.0 * math.pi * f0 * mult / SR
+            out[i] += math.sin(ph) * env[i] * g
+    click = _noise(int(0.003 * SR), rng)
+    _hp(click, 3000.0)
+    _mix_into(out, click, 0, 0.25)
+    m = max(abs(x) for x in out) or 1.0          # normalise: partials sum unpredictably
+    for i in range(n):
+        out[i] /= m
+    return out
+
 def v_clap(rng):
     """Handclap: three quick slaps a few ms apart, then a short room tail.
 
@@ -173,7 +208,7 @@ def v_clap(rng):
         out[tail_off + i] += nz[i] * env[i] * 0.45
     return out
 
-VOICES = {"clap": v_clap, "kick": v_kick, "snare": v_snare, "ghost": v_snare_ghost,
+VOICES = {"ping": v_ping, "clap": v_clap, "kick": v_kick, "snare": v_snare, "ghost": v_snare_ghost,
           "rim": v_rim, "hat": v_hat, "hato": v_hat_open,
           "brush": v_brush, "brushit": v_brush_hit}
 
@@ -318,11 +353,17 @@ def _check(name, cfg):
             assert step >= ff, (f"{name}: fill {v} at step {step} is before fill_from={ff} "
                                 f"-- it would double up with the kept pattern hit")
 
-def render(name, cfg, bpm=None, bars=None):
+def render(name, cfg, bpm=None, bars=None, swing=None, accent=None, ping=None):
     _check(name, cfg)
     bpm  = bpm  or cfg["bpm"]
     bars = bars or cfg["bars"]
-    div, swing = cfg["div"], cfg["swing"]
+    div  = cfg["div"]
+    # Swing is overridable because feel tracks tempo: the same pattern usually wants
+    # more bounce as it slows down. Keeps one style serving a tempo range instead of
+    # spawning a near-duplicate style per bpm.
+    swing = cfg["swing"] if swing is None else swing
+    accent = DOWNBEAT_ACCENT if accent is None else accent
+    ping   = PING_LEVEL      if ping   is None else ping
     rng = random.Random(hash(name) & 0xffff)        # deterministic per style
 
     spb = 60.0 / bpm * 4.0                          # seconds per bar (4/4)
@@ -333,10 +374,13 @@ def render(name, cfg, bpm=None, bars=None):
     # Render each voice once, reuse at every hit.
     bank = {v: VOICES[v](rng) for v in
             set(list(cfg["pattern"]) + list(cfg.get("fill", {})))}
+    ping_buf = VOICES["ping"](rng) if ping > 0.0 else None
 
     step_n = spb * SR / div
     for bar in range(bars):
         last = (bar == bars - 1)
+        if ping_buf is not None:                        # mark beat 1 of every bar
+            _mix_into(buf, ping_buf, int(bar * div * step_n), ping)
         layers = [cfg["pattern"]]
         if last and cfg.get("fill"):
             # Keep every pattern hit BEFORE fill_from -- including the backbeat --
@@ -357,6 +401,8 @@ def render(name, cfg, bpm=None, bars=None):
                     t += rng.uniform(-0.0016, 0.0016) * SR      # humanise timing
                     t = max(0.0, t)                             # never before the downbeat
                     v = vel * rng.uniform(0.93, 1.0)            # ...and velocity
+                    if step == 0:
+                        v *= accent                                # beat 1 of every bar
                     _mix_into(buf, bank[voice], int(t), v)
 
     # Wrap the overhang so the loop joins itself with no click and no cut decay.
@@ -382,7 +428,7 @@ def render(name, cfg, bpm=None, bars=None):
     with wave.open(path, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
         w.writeframes(pcm.tobytes())
-    print(f"  {fn:28s} {bars} bars @ {bpm} bpm  "
+    print(f"  {fn:28s} {bars} bars @ {bpm} bpm  swing {swing:.2f}  acc {accent:.2f}  ping {ping:.2f}  "
           f"{loop_n/SR:5.2f} s  {len(pcm)*2/1024:6.0f} kB  -- {cfg['note']}")
     return path
 
@@ -393,6 +439,13 @@ def main():
                     help="styles to render (default: all): " + ", ".join(STYLES))
     ap.add_argument("--bpm", type=int, help="override tempo")
     ap.add_argument("--bars", type=int, help="override loop length in bars")
+    ap.add_argument("--ping", type=float,
+                    help=f"beat-1 bell level (default {PING_LEVEL}; 0 = off)")
+    ap.add_argument("--accent", type=float,
+                    help=f"beat-1 accent multiplier (default {DOWNBEAT_ACCENT}; 1.0 = off)")
+    ap.add_argument("--swing", type=float,
+                    help="override swing 0..1 (0 = straight, ~0.33 = full triplet feel). "
+                         "Slower tempos generally want more.")
     a = ap.parse_args()
     names = a.styles or list(STYLES)
     for n in names:
@@ -401,7 +454,7 @@ def main():
     print(f"Rendering {len(names)} loop(s) to sdcard_template/tonetrix/backing/ "
           f"({SR} Hz mono 16-bit, peak {PEAK_DBFS:.0f} dBFS)")
     for n in names:
-        render(n, STYLES[n], a.bpm, a.bars)
+        render(n, STYLES[n], a.bpm, a.bars, a.swing, a.accent, a.ping)
 
 if __name__ == "__main__":
     sys.exit(main())
