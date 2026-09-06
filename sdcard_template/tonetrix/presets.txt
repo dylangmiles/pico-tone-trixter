@@ -20,6 +20,12 @@
 #   pga:        ES8388 input PGA gain in dB (0..24, 3 dB steps), set when this preset
 #               loads. Passive K&K ~12; active Garrison ~6 (its preamp is hot — +12 clips
 #               the ADC on hard strums). Omit to inherit the default (12).
+#               ⚠ IGNORED on the Daisy build: the Seed3's TAC5242 has no software gain
+#               control, and the front-end level is set by the analogue daughter instead.
+#   bk.level:   backing-track level, 0.0..2.0, applied when this preset loads.
+#               ⚠ DAISY-ONLY KEY. The RP2350 build's parser ignores keys it does not know,
+#               so this file stays readable by BOTH pedals — one card, one set of presets.
+#               ⚠ Omit (or 0) means "leave the current level alone", NOT silence.
 #
 # This file reproduces the firmware's three built-in presets. Edit freely —
 # the pedal reads it on boot; type `sdreload` over UART to re-read without a
@@ -43,6 +49,7 @@ eq.hi: [3500, 0.0]
 comp: [-18, 3.0, 1, 250, 6]
 out.level: 0.60
 pga: 0
+bk.level: 1.00
 
 ---
 
@@ -64,6 +71,8 @@ eq.hi: [1500, -2.0]
 comp: [-28, 4.0, 1, 300, 16]
 out.level: 0.65
 pga: 0
+# Slide playing sits quietly under a backing bed, so the bed comes down to leave room.
+bk.level: 0.70
 
 ---
 
@@ -84,3 +93,5 @@ eq.hi: [3500, -1.5]
 comp: [-28, 4.0, 1, 250, 16]
 out.level: 0.50
 pga: 0
+# The garrison preset already runs a lower out.level, so the bed can sit nearer unity.
+bk.level: 0.90
