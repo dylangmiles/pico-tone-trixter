@@ -32,6 +32,7 @@ usually sits, **not measured against any recording**, so expect to want a nudge.
 |---|---|---|---|
 | `blues71`   |  71 | Same country blues shuffle as `blues92`, slower and heavier | **"Walking Blues" — Muddy Waters** *(requested)* |
 | `folksh76`  |  76 | Slow brushed shuffle, 12/8, swirl on the shuffle "and" | slow 12/8 ballads, gentle blues |
+| `blues81`   |  81 | Same country blues shuffle as `blues92`, a little slower | slow Delta blues, slide |
 | `blues92`   |  92 | Country blues shuffle, 12/8, ride-style hat, ghost notes | acoustic country blues, slide |
 | `blues100`  | 100 | Same country blues shuffle as `blues92`, a touch brisker | **"I Can't Be Satisfied" — Muddy Waters** *(requested)* |
 | `folk104`   | 104 | Light two-step with brushes, cross-stick | country folk, fingerstyle |
@@ -44,7 +45,7 @@ usually sits, **not measured against any recording**, so expect to want a nudge.
 
 All are **4 bars**, seamless, and start exactly on beat 1.
 
-⚠ `blues71` / `blues92` / `blues100` are the **same groove at three tempos** — identical pattern,
+⚠ `blues71` / `blues81` / `blues92` / `blues100` are the **same groove at four tempos** — identical pattern,
 identical swing. Rendered from one style, so a change to the feel applies to all three:
 
     python3 tools/gen_backing_loops.py country_blues --bpm 71
