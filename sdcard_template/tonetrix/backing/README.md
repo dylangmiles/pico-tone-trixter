@@ -30,8 +30,10 @@ usually sits, **not measured against any recording**, so expect to want a nudge.
 
 | File | bpm | Feel | Try it with |
 |---|---|---|---|
+| `blues71`   |  71 | Same country blues shuffle as `blues92`, slower and heavier | **"Walking Blues" — Muddy Waters** *(requested)* |
 | `folksh76`  |  76 | Slow brushed shuffle, 12/8, swirl on the shuffle "and" | slow 12/8 ballads, gentle blues |
 | `blues92`   |  92 | Country blues shuffle, 12/8, ride-style hat, ghost notes | acoustic country blues, slide |
+| `blues100`  | 100 | Same country blues shuffle as `blues92`, a touch brisker | **"I Can't Be Satisfied" — Muddy Waters** *(requested)* |
 | `folk104`   | 104 | Light two-step with brushes, cross-stick | country folk, fingerstyle |
 | `rock120`   | 120 | Straight 8ths, backbeat, open-hat lift into the turnaround | general rock |
 | `folkr128`  | 128 | Gentle country-folk-rock, soft brushed backbeat, sparse kick | **"Old Man" — Neil Young** *(requested)* |
@@ -41,6 +43,11 @@ usually sits, **not measured against any recording**, so expect to want a nudge.
 | `rkbly156`  | 156 | Rockabilly bounce, handclaps doubling the backbeat | **"Crazy Little Thing Called Love" — Queen** *(requested)* |
 
 All are **4 bars**, seamless, and start exactly on beat 1.
+
+⚠ `blues71` / `blues92` / `blues100` are the **same groove at three tempos** — identical pattern,
+identical swing. Rendered from one style, so a change to the feel applies to all three:
+
+    python3 tools/gen_backing_loops.py country_blues --bpm 71
 
 ## Regenerating
 
