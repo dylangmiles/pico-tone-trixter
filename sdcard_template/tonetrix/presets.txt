@@ -120,3 +120,42 @@ pga: 0
 byp.level: 2.4
 # The garrison preset already runs a lower out.level, so the bed can sit nearer unity.
 bk.level: 0.90
+
+---
+
+# silent — Yamaha Silent Guitar (SLG), active SRT pickup.
+#
+# ⚠ THIS IS A CHOSEN TONE, NOT A MEASURED ONE. The SLG has no soundbox, so there is no acoustic
+# target to capture a transfer function TO — the usual simultaneous piezo+mic method cannot work
+# here, and no amount of mic gain changes that. So it borrows the GARRISON IR and the question
+# becomes "which acoustic should this sound like", not "what does this guitar sound like".
+#
+# ⚠ Garrison rather than tanglewood on purpose: an IR embeds the SOURCE pickup as well as the target
+# body, and the garrison IR was captured through an ACTIVE preamp like the SLG's. The tanglewood IR
+# came through a passive K&K, so its built-in preamp correction fights an active source harder.
+#
+# ⚠ TURN THE SLG's OWN SRT BODY MODELLING OFF before judging this. Leaving it on runs two body
+# simulations in series — the result is smeared and phasey, not "more acoustic", and it is very hard
+# to attribute once you are chasing it with EQ.
+#
+# ⚠ EQ HERE IS EXPECTED TO MOVE. The residual error is the difference between the Garrison's pickup
+# and the SLG's, and the IR cannot correct that — it never saw the SLG's piezo. Starting values are
+# copied from garrison; trim by ear with the Garrison as the reference. That is the honest division
+# of labour: the IR kills the quack and adds body, the EQ trims the pickup mismatch.
+name: silent
+ir: garrison.wav
+in.on: 1
+eq.on: 1
+comp.on: 1
+out.on: 1
+in.level: 0.75
+eq.lo: [120, 2.0]
+eq.mid: [1000, -2.5, 1.0]
+eq.hi: [3500, -1.5]
+comp: [-28, 4.0, 1, 250, 16]
+out.level: 0.50
+pga: 0
+# Same derivation as garrison: -2.5 + 16 - 6.0 = +7.5 dB static, hence 2.4x. Re-trim by ear once the
+# EQ has moved — the A/B is only honest when bypass and engaged sit at the same loudness.
+byp.level: 2.4
+bk.level: 0.90
