@@ -83,18 +83,19 @@ eq.lo: [150, 3.0]
 eq.mid: [800, -3.0, 1.0]
 eq.hi: [1500, -2.0]
 comp: [-28, 4.0, 1, 300, 16]
-out.level: 0.65
+out.level: 0.45
 pga: 0
-# Bypass make-up, so stomping changes CHARACTER and not loudness. Static chain gain is
-# in.level -2.5 dB + comp make-up +16 dB + out.level -3.7 dB = +9.8 dB, hence 3.1x.
-# ⚠ 3.1 matches at the QUIET end. The +16 dB make-up is only fully realised when the
-# compressor is doing nothing; once you play in and gain reduction kicks in, the gap
-# narrows -- the bench ear-test (out.level 0.65 -> 0.30) implies about -6.7 dB, i.e. ~2.2.
-# A compressor cannot be matched at every level by one number. Trim by ear at PLAYING
-# level, which is the level the A/B is judged at.
-byp.level: 3.1
-# Slide playing sits quietly under a backing bed, so the bed comes down to leave room.
-bk.level: 0.70
+# ⚠ OUTPUT LEVELLED 2026-09-09. All three voiced presets now share in.level 0.75, comp make-up 16 dB
+# and out.level 0.45, so they are MUTUALLY MATCHED -- switching preset no longer changes loudness.
+# byp.level 2.1 is the static chain gain that leaves: -2.5 + 16 - 6.9 = +6.6 dB, so bypass and
+# engaged sit level and the stomp changes character only.
+# ⚠ 0.45 is NOT arithmetic unity -- unity would be out.level 0.21 (-13.5 dB). It is the builder's ear
+# setting, and with a compressor in circuit "unity" is level-dependent anyway: below the -28 dB
+# threshold the chain runs at +6.6 dB, above it gain reduction pulls it back. Trim by ear at PLAYING
+# level; if you do move it, move byp.level with it or the A/B stops being honest.
+byp.level: 2.1
+# ⚠ Bed at 1.00 now that the presets are levelled -- it no longer has to duck a hot guitar.
+bk.level: 1.00
 
 ---
 
@@ -113,13 +114,12 @@ eq.lo: [120, 2.0]
 eq.mid: [1000, -2.5, 1.0]
 eq.hi: [3500, -1.5]
 comp: [-28, 4.0, 1, 250, 16]
-out.level: 0.50
+out.level: 0.45
 pga: 0
-# Same derivation: -2.5 + 16 - 6.0 = +7.5 dB static, hence 2.4x. Lower than tanglewood's
-# because this preset already runs a quieter out.level. Trim by ear at playing level.
-byp.level: 2.4
-# The garrison preset already runs a lower out.level, so the bed can sit nearer unity.
-bk.level: 0.90
+# Same levelling as the others -- see tanglewood-slide.
+byp.level: 2.1
+# ⚠ Bed at 1.00 now that the presets are levelled.
+bk.level: 1.00
 
 ---
 
@@ -153,9 +153,8 @@ eq.lo: [120, 2.0]
 eq.mid: [1000, -2.5, 1.0]
 eq.hi: [3500, -1.5]
 comp: [-28, 4.0, 1, 250, 16]
-out.level: 0.50
+out.level: 0.45
 pga: 0
-# Same derivation as garrison: -2.5 + 16 - 6.0 = +7.5 dB static, hence 2.4x. Re-trim by ear once the
-# EQ has moved — the A/B is only honest when bypass and engaged sit at the same loudness.
-byp.level: 2.4
-bk.level: 0.90
+# Same levelling as the others -- see tanglewood-slide.
+byp.level: 2.1
+bk.level: 1.00
