@@ -87,13 +87,19 @@ out.level: 0.45
 pga: 0
 # ⚠ OUTPUT LEVELLED 2026-09-09. All three voiced presets now share in.level 0.75, comp make-up 16 dB
 # and out.level 0.45, so they are MUTUALLY MATCHED -- switching preset no longer changes loudness.
-# byp.level 2.1 is the static chain gain that leaves: -2.5 + 16 - 6.9 = +6.6 dB, so bypass and
-# engaged sit level and the stomp changes character only.
+# ⚠ byp.level 1.6 is EAR-DERIVED at playing level, 2026-09-10 -- it is NOT the static figure.
+# Static chain gain is -2.5 + 16 - 6.9 = +6.6 dB, i.e. 2.12x, and 2.1 did sound slightly loud in
+# bypass. 1.6 is +4.1 dB.
+#
+# ⚠ The 2.5 dB gap between them IS the compressor: below the -28 dB threshold the chain runs at the
+# full static gain, but at playing level gain reduction pulls it back, so the make-up needed to match
+# bypass is correspondingly less. That difference is a rough read of the average GR being applied --
+# about 2.5 dB at this builder's playing level on this guitar.
 # ⚠ 0.45 is NOT arithmetic unity -- unity would be out.level 0.21 (-13.5 dB). It is the builder's ear
 # setting, and with a compressor in circuit "unity" is level-dependent anyway: below the -28 dB
 # threshold the chain runs at +6.6 dB, above it gain reduction pulls it back. Trim by ear at PLAYING
 # level; if you do move it, move byp.level with it or the A/B stops being honest.
-byp.level: 2.1
+byp.level: 1.6
 # ⚠ Bed at 1.00 now that the presets are levelled -- it no longer has to duck a hot guitar.
 bk.level: 1.00
 
@@ -117,7 +123,7 @@ comp: [-28, 4.0, 1, 250, 16]
 out.level: 0.45
 pga: 0
 # Same levelling as the others -- see tanglewood-slide.
-byp.level: 2.1
+byp.level: 1.6
 # ⚠ Bed at 1.00 now that the presets are levelled.
 bk.level: 1.00
 
@@ -156,5 +162,5 @@ comp: [-28, 4.0, 1, 250, 16]
 out.level: 0.45
 pga: 0
 # Same levelling as the others -- see tanglewood-slide.
-byp.level: 2.1
+byp.level: 1.6
 bk.level: 1.00
