@@ -1,3 +1,8 @@
+> ⚠ **FROZEN 2026-09-14.** The live SD card template now lives in the Daisy repo
+> (`tone-trixter/daisy/sdcard_template/`) and evolves with the Daisy firmware. This copy is the
+> last layout the RP2350 build was tested with and is kept so that firmware still has a matching card.
+> Do not edit it; edit the Daisy one.
+
 # Tone Trixter — SD card template
 
 Drag the **`tonetrix/`** folder onto the root of a FAT32-formatted microSD card, so
